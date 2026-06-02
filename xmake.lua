@@ -137,20 +137,48 @@ package("apr")
     end)
 package_end()
 
+-- 5.5 apr-iconv (optional, for character encoding conversion)
+package("apr-iconv")
+    set_sourcedir(path.join(rootdir, "apr-iconv"))
+    add_deps("apr")
+    on_install("linux", "macosx", function (package)
+        local apr_dir = package:dep("apr"):installdir()
+        os.vrunv("sh", {"./buildconf"})
+        import("package.tools.autoconf").install(package, {
+            "--with-apr=" .. apr_dir,
+            "--enable-shared=yes",
+            "--enable-static=no",
+        })
+        os.rm(package:installdir("lib/*.a"))
+    end)
+package_end()
+
 -- 6. apr-util
 package("apr-util")
     set_sourcedir(path.join(rootdir, "apr-util"))
-    add_deps("apr", "libexpat")
+    add_deps("apr", "libexpat", "apr-iconv")
     on_install("linux", "macosx", function (package)
         local apr_src = path.join(rootdir, "apr")
         local apr_dir = package:dep("apr"):installdir()
-        os.vrunv("sh", {"./buildconf", "--with-apr=" .. apr_src})
+        local apr_iconv_dir = package:dep("apr-iconv"):installdir()
         local expat_dir = package:dep("libexpat"):installdir()
+
+        -- Run buildconf with source paths
+        os.vrunv("sh", {"./buildconf", "--with-apr=" .. apr_src})
+
         import("package.tools.autoconf").install(package, {
-            "--with-apr=" .. apr_dir, "--with-expat=" .. expat_dir,
-            "--without-libxml2", "--without-iconv", "--without-sqlite3",
-            "--without-pgsql", "--without-ldap", "--without-odbc",
-            "--without-crypto", "--enable-shared=yes", "--enable-static=no",
+            "--with-apr=" .. apr_dir,
+            "--with-apr-iconv=../apr-iconv",
+            "--with-expat=" .. expat_dir,
+            "--without-libxml2",
+            "--with-iconv=" .. apr_iconv_dir,
+            "--without-sqlite3",
+            "--without-pgsql",
+            "--without-ldap",
+            "--without-odbc",
+            "--without-crypto",
+            "--enable-shared=yes",
+            "--enable-static=no",
         })
         os.rm(package:installdir("lib/*.a"))
     end)
@@ -309,12 +337,24 @@ target("subversion-install")
 
         -- Copy files from all package directories
         for _, pkg_dir in ipairs(pkg_dirs) do
-            -- Copy lib files (skip static)
+            -- Copy lib files using cp -a to preserve symlinks
             if os.isdir(path.join(pkg_dir, "lib")) then
                 os.mkdir(path.join(installdir, "lib"))
+                -- Copy each file/symlink individually
                 for _, f in ipairs(os.files(path.join(pkg_dir, "lib", "*"))) do
-                    if not f:match("%.a$") then
-                        os.cp(f, path.join(installdir, "lib"))
+                    local fname = path.filename(f)
+                    -- Skip static libraries
+                    if not fname:match("%.a$") and not fname:match("%.la$") then
+                        local dest = path.join(installdir, "lib", fname)
+                        -- Remove existing file/link first
+                        os.tryrm(dest)
+                        -- Check if source is a symlink
+                        if os.islink(f) then
+                            local linktarget = os.readlink(f)
+                            os.ln(linktarget, dest)
+                        else
+                            os.cp(f, dest)
+                        end
                     end
                 end
             end
@@ -322,7 +362,15 @@ target("subversion-install")
             if os.isdir(path.join(pkg_dir, "bin")) then
                 os.mkdir(path.join(installdir, "bin"))
                 for _, f in ipairs(os.files(path.join(pkg_dir, "bin", "*"))) do
-                    os.cp(f, path.join(installdir, "bin"))
+                    local fname = path.filename(f)
+                    local dest = path.join(installdir, "bin", fname)
+                    os.tryrm(dest)
+                    if os.islink(f) then
+                        local linktarget = os.readlink(f)
+                        os.ln(linktarget, dest)
+                    else
+                        os.cp(f, dest)
+                    end
                 end
             end
             -- Copy include files
