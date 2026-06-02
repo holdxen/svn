@@ -9,7 +9,7 @@ add_requireconfs("*", {system = false})
 local rootdir = os.scriptdir()
 
 -- ============================================================
--- Package definitions (all dependencies except serf)
+-- Package definitions
 -- ============================================================
 
 -- 1. zlib
@@ -54,11 +54,7 @@ package("openssl")
         }
         if package:is_debug() then table.insert(configs, "-g") end
         if package:is_plat("macosx") then
-            if package:is_arch("x86_64") then
-                table.insert(configs, 1, "darwin64-x86_64-cc")
-            elseif package:is_arch("arm64") then
-                table.insert(configs, 1, "darwin64-arm64-cc")
-            end
+            table.insert(configs, 1, package:is_arch("x86_64") and "darwin64-x86_64-cc" or "darwin64-arm64-cc")
         elseif package:is_plat("linux") then
             if package:is_arch("x86_64") then
                 table.insert(configs, 1, "linux-x86_64")
@@ -68,11 +64,7 @@ package("openssl")
                 table.insert(configs, 1, "linux-aarch64")
             end
         elseif package:is_plat("windows") then
-            if package:is_arch("x64") then
-                table.insert(configs, 1, "VC-WIN64A")
-            elseif package:is_arch("x86") then
-                table.insert(configs, 1, "VC-WIN32")
-            end
+            table.insert(configs, 1, package:is_arch("x64") and "VC-WIN64A" or "VC-WIN32")
             os.vrunv("perl", table.join({"Configure"}, configs))
             os.vrunv("nmake")
             os.vrunv("nmake", {"install_sw"})
@@ -171,13 +163,12 @@ package("apr-util")
     end)
 package_end()
 
--- 7. subversion
+-- 7. subversion (depends on all packages except serf)
 package("subversion")
     set_sourcedir(path.join(rootdir, "subversion"))
     add_deps("sqlite", "openssl", "apr-util", "apr", "libexpat", "zlib")
     on_install(function (package)
-        local python = "python3"
-        if package:is_plat("windows") then python = "python" end
+        local python = package:is_plat("windows") and "python" or "python3"
         os.vrunv(python, {"gen-make.py", "-t", "cmake"})
 
         -- Find serf in the install directory (built as target)
@@ -202,13 +193,14 @@ package("subversion")
 package_end()
 
 -- ============================================================
--- Install all packages first
+-- Install dependencies first
 -- ============================================================
 add_requires("zlib", "libexpat", "openssl", "sqlite",
              "apr", "apr-util")
 
 -- ============================================================
 -- Serf target (built with xmake, not as package)
+-- Uses on_load to dynamically find package paths
 -- ============================================================
 target("serf")
     set_kind("shared")
@@ -219,13 +211,13 @@ target("serf")
     add_files("serf/buckets/*.c")
     add_files("serf/auth/*.c")
 
-    -- Include paths and links will be set in on_load
+    -- Include own headers
     add_includedirs("serf")
 
     -- Defines
     add_defines("SERF_SHARED", "OPENSSL_NO_STDIO")
 
-    -- Platform specific
+    -- System libraries
     if is_plat("linux") then
         add_syslinks("pthread")
     end
@@ -233,23 +225,22 @@ target("serf")
     -- Output to install directory
     set_targetdir("build/install/lib")
 
-    -- Load package paths dynamically
+    -- Dynamically find and add dependency paths
     on_load(function (target)
-        -- Find package install directories from cache
-        local rootdir = os.scriptdir()
-        local pkg_cache = path.join(rootdir, "build", ".packages")
-        local pkg_names = {"apr", "apr-util", "openssl", "zlib", "libexpat"}
-        for _, name in ipairs(pkg_names) do
-            local first_char = name:sub(1, 1)
-            local pkg_path = path.join(pkg_cache, first_char, name, "latest")
-            if os.isdir(pkg_path) then
-                for _, hash_dir in ipairs(os.dirs(path.join(pkg_path, "*"))) do
-                    if path.filename(hash_dir) ~= "cache" and os.isdir(path.join(hash_dir, "lib")) then
-                        target:add("includedirs", path.join(hash_dir, "include"))
-                        target:add("includedirs", path.join(hash_dir, "include", "apr-1"))
-                        target:add("linkdirs", path.join(hash_dir, "lib"))
-                        break
+        import("core.project.project")
+
+        -- Get dependency package objects from project
+        local dep_names = {"apr", "apr-util", "openssl", "zlib", "libexpat"}
+        for _, name in ipairs(dep_names) do
+            local pkg = project.required_package(name)
+            if pkg then
+                local dir = pkg:installdir()
+                if dir then
+                    target:add("includedirs", path.join(dir, "include"), {public = true})
+                    if name == "apr" or name == "apr-util" then
+                        target:add("includedirs", path.join(dir, "include", "apr-1"), {public = true})
                     end
+                    target:add("linkdirs", path.join(dir, "lib"), {public = true})
                 end
             end
         end
@@ -257,7 +248,7 @@ target("serf")
         target:add("links", "ssl", "crypto", "z", "apr-1", "aprutil-1")
     end)
 
-    -- After build, copy headers
+    -- After build, copy headers to install directory
     after_build(function (target)
         local incdir = path.join(os.scriptdir(), "build", "install", "include", "serf-1")
         os.mkdir(incdir)
@@ -268,7 +259,7 @@ target("serf")
 target_end()
 
 -- ============================================================
--- Build target
+-- Build target - triggers serf build and dependency install
 -- ============================================================
 target("svn-build")
     set_kind("phony")
@@ -276,7 +267,7 @@ target("svn-build")
 target_end()
 
 -- ============================================================
--- Install target
+-- Install target - copies files and fixes rpath
 -- ============================================================
 target("subversion-install")
     set_kind("phony")
@@ -291,7 +282,7 @@ target("subversion-install")
             for _, letter_dir in ipairs(os.dirs(path.join(pkg_cache, "*"))) do
                 for _, name_dir in ipairs(os.dirs(path.join(letter_dir, "*"))) do
                     for _, hash_dir in ipairs(os.dirs(path.join(name_dir, "latest", "*"))) do
-                        if hash_dir ~= "cache" and os.isdir(path.join(hash_dir, "lib")) then
+                        if path.filename(hash_dir) ~= "cache" and os.isdir(path.join(hash_dir, "lib")) then
                             table.insert(pkg_dirs, hash_dir)
                         end
                     end
@@ -301,6 +292,7 @@ target("subversion-install")
 
         -- Copy files from all package directories
         for _, pkg_dir in ipairs(pkg_dirs) do
+            -- Copy lib files (skip static)
             if os.isdir(path.join(pkg_dir, "lib")) then
                 os.mkdir(path.join(installdir, "lib"))
                 for _, f in ipairs(os.files(path.join(pkg_dir, "lib", "*"))) do
@@ -309,12 +301,14 @@ target("subversion-install")
                     end
                 end
             end
+            -- Copy bin files
             if os.isdir(path.join(pkg_dir, "bin")) then
                 os.mkdir(path.join(installdir, "bin"))
                 for _, f in ipairs(os.files(path.join(pkg_dir, "bin", "*"))) do
                     os.cp(f, path.join(installdir, "bin"))
                 end
             end
+            -- Copy include files
             if os.isdir(path.join(pkg_dir, "include")) then
                 os.mkdir(path.join(installdir, "include"))
                 for _, d in ipairs(os.dirs(path.join(pkg_dir, "include", "*"))) do
@@ -335,11 +329,13 @@ target("subversion-install")
             local bindir = path.join(installdir, "bin")
             local libdir = path.join(installdir, "lib")
 
+            -- Fix library install names
             for _, libfile in ipairs(os.files(path.join(libdir, "*.dylib"))) do
                 local libname = path.filename(libfile)
                 os.vrunv("install_name_tool", {"-id", "@rpath/" .. libname, libfile}, {try = true})
             end
 
+            -- Fix absolute path references in dylibs
             for _, libfile in ipairs(os.files(path.join(libdir, "*.dylib"))) do
                 local otool_out = os.iorunv("otool", {"-L", libfile})
                 if otool_out then
@@ -353,6 +349,7 @@ target("subversion-install")
                 end
             end
 
+            -- Fix binaries
             for _, binfile in ipairs(os.files(path.join(bindir, "*"))) do
                 local fname = path.filename(binfile)
                 if fname ~= "c_rehash" and not fname:match("-config$") then
