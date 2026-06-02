@@ -9,10 +9,10 @@ add_requireconfs("*", {system = false})
 local rootdir = os.scriptdir()
 
 -- ============================================================
--- Package definitions
+-- Package definitions (all dependencies except serf)
 -- ============================================================
 
--- 1. zlib (no deps) - cmake works on all platforms
+-- 1. zlib
 package("zlib")
     set_sourcedir(path.join(rootdir, "zlib"))
     on_install(function (package)
@@ -23,7 +23,7 @@ package("zlib")
     end)
 package_end()
 
--- 2. libexpat (no deps) - cmake works on all platforms
+-- 2. libexpat
 package("libexpat")
     set_sourcedir(path.join(rootdir, "libexpat", "expat"))
     on_install(function (package)
@@ -38,7 +38,7 @@ package("libexpat")
     end)
 package_end()
 
--- 3. openssl (depends: zlib)
+-- 3. openssl
 package("openssl")
     set_sourcedir(path.join(rootdir, "openssl"))
     add_deps("zlib")
@@ -46,16 +46,13 @@ package("openssl")
         local packagedir = package:installdir()
         local zlib_dir = package:dep("zlib"):installdir()
         local configs = {
-            "shared",
-            "zlib",
+            "shared", "zlib",
             "--prefix=" .. packagedir,
             "--openssldir=" .. packagedir .. "/ssl",
             "--with-zlib-include=" .. path.join(zlib_dir, "include"),
             "--with-zlib-lib=" .. path.join(zlib_dir, "lib"),
         }
-        if package:is_debug() then
-            table.insert(configs, "-g")
-        end
+        if package:is_debug() then table.insert(configs, "-g") end
         if package:is_plat("macosx") then
             if package:is_arch("x86_64") then
                 table.insert(configs, 1, "darwin64-x86_64-cc")
@@ -76,7 +73,6 @@ package("openssl")
             elseif package:is_arch("x86") then
                 table.insert(configs, 1, "VC-WIN32")
             end
-            -- On Windows, use nmake instead of make
             os.vrunv("perl", table.join({"Configure"}, configs))
             os.vrunv("nmake")
             os.vrunv("nmake", {"install_sw"})
@@ -91,54 +87,32 @@ package("openssl")
     end)
 package_end()
 
--- 4. sqlite (no deps)
+-- 4. sqlite
 package("sqlite")
     set_sourcedir(path.join(rootdir, "sqlite"))
     on_install("linux", "macosx", function (package)
         import("package.tools.autoconf").install(package, {
-            "--enable-shared",
-            "--disable-static",
+            "--enable-shared", "--disable-static",
         })
     end)
     on_install("windows", function (package)
-        -- On Windows, use cmake if available, otherwise compile directly
-        local cmakefile = path.join(package:sourcedir(), "CMakeLists.txt")
-        if os.isfile(cmakefile) then
-            import("package.tools.cmake").install(package, {
-                "-DCMAKE_BUILD_TYPE=" .. (package:is_debug() and "Debug" or "Release"),
-                "-DBUILD_SHARED_LIBS=ON",
-            })
-        else
-            -- Fallback: compile sqlite3.c directly
-            local packagedir = package:installdir()
-            local srcdir = package:sourcedir()
-            local cflags = {"-I" .. srcdir}
-            if not package:is_debug() then
-                table.insert(cflags, "-O2")
-                table.insert(cflags, "-DNDEBUG")
-            end
-
-            -- Compile sqlite3.c
-            local obj = path.join(packagedir, "sqlite3.obj")
-            os.vrunv("cl", table.join(cflags, {"/c", path.join(srcdir, "sqlite3.c"), "/Fo" .. obj}))
-
-            -- Link DLL
-            local libdir = path.join(packagedir, "lib")
-            local bindir = path.join(packagedir, "bin")
-            os.mkdir(libdir)
-            os.mkdir(bindir)
-            os.vrunv("link", {"/DLL", "/OUT:" .. path.join(bindir, "sqlite3.dll"), "/IMPLIB:" .. path.join(libdir, "sqlite3.lib"), obj})
-
-            -- Install headers
-            local incdir = path.join(packagedir, "include")
-            os.mkdir(incdir)
-            os.cp(path.join(srcdir, "sqlite3.h"), incdir)
-            os.cp(path.join(srcdir, "sqlite3ext.h"), incdir)
-        end
+        local packagedir = package:installdir()
+        local srcdir = package:sourcedir()
+        local obj = path.join(packagedir, "sqlite3.obj")
+        os.vrunv("cl", {"/c", path.join(srcdir, "sqlite3.c"), "/Fo" .. obj})
+        local libdir = path.join(packagedir, "lib")
+        local bindir = path.join(packagedir, "bin")
+        os.mkdir(libdir)
+        os.mkdir(bindir)
+        os.vrunv("link", {"/DLL", "/OUT:" .. path.join(bindir, "sqlite3.dll"), "/IMPLIB:" .. path.join(libdir, "sqlite3.lib"), obj})
+        local incdir = path.join(packagedir, "include")
+        os.mkdir(incdir)
+        os.cp(path.join(srcdir, "sqlite3.h"), incdir)
+        os.cp(path.join(srcdir, "sqlite3ext.h"), incdir)
     end)
 package_end()
 
--- 5. apr (depends: libexpat)
+-- 5. apr
 package("apr")
     set_sourcedir(path.join(rootdir, "apr"))
     add_deps("libexpat")
@@ -163,13 +137,12 @@ package("apr")
     on_install("windows", function (package)
         import("package.tools.cmake").install(package, {
             "-DCMAKE_BUILD_TYPE=" .. (package:is_debug() and "Debug" or "Release"),
-            "-DBUILD_SHARED_LIBS=ON",
-            "-DINSTALL_PDB=OFF",
+            "-DBUILD_SHARED_LIBS=ON", "-DINSTALL_PDB=OFF",
         })
     end)
 package_end()
 
--- 6. apr-util (depends: apr, libexpat)
+-- 6. apr-util
 package("apr-util")
     set_sourcedir(path.join(rootdir, "apr-util"))
     add_deps("apr", "libexpat")
@@ -179,160 +152,42 @@ package("apr-util")
         os.vrunv("sh", {"./buildconf", "--with-apr=" .. apr_src})
         local expat_dir = package:dep("libexpat"):installdir()
         import("package.tools.autoconf").install(package, {
-            "--with-apr=" .. apr_dir,
-            "--with-expat=" .. expat_dir,
-            "--without-libxml2",
-            "--without-iconv",
-            "--without-sqlite3",
-            "--without-pgsql",
-            "--without-ldap",
-            "--without-odbc",
-            "--without-crypto",
-            "--enable-shared=yes",
-            "--enable-static=no",
+            "--with-apr=" .. apr_dir, "--with-expat=" .. expat_dir,
+            "--without-libxml2", "--without-iconv", "--without-sqlite3",
+            "--without-pgsql", "--without-ldap", "--without-odbc",
+            "--without-crypto", "--enable-shared=yes", "--enable-static=no",
         })
         os.rm(package:installdir("lib/*.a"))
     end)
     on_install("windows", function (package)
         import("package.tools.cmake").install(package, {
             "-DCMAKE_BUILD_TYPE=" .. (package:is_debug() and "Debug" or "Release"),
-            "-DBUILD_SHARED_LIBS=ON",
-            "-DAPU_HAVE_ICONV=OFF",
-            "-DAPU_BUILD_TEST=OFF",
-            "-DAPU_HAVE_SQLITE3=OFF",
-            "-DAPU_HAVE_PGSQL=OFF",
-            "-DAPR_HAS_LDAP=OFF",
-            "-DAPU_HAVE_ODBC=OFF",
-            "-DAPU_HAVE_CRYPTO=OFF",
-            "-DAPU_DSO_BUILD=ON",
-            "-DINSTALL_PDB=OFF",
+            "-DBUILD_SHARED_LIBS=ON", "-DAPU_HAVE_ICONV=OFF",
+            "-DAPU_BUILD_TEST=OFF", "-DAPU_HAVE_SQLITE3=OFF",
+            "-DAPU_HAVE_PGSQL=OFF", "-DAPR_HAS_LDAP=OFF",
+            "-DAPU_HAVE_ODBC=OFF", "-DAPU_HAVE_CRYPTO=OFF",
+            "-DAPU_DSO_BUILD=ON", "-DINSTALL_PDB=OFF",
         })
     end)
 package_end()
 
--- 7. serf (depends: apr, apr-util, openssl, zlib)
-package("serf")
-    set_sourcedir(path.join(rootdir, "serf"))
-    add_deps("apr", "apr-util", "openssl", "zlib")
-    on_install(function (package)
-        import("core.tool.compiler")
-        import("core.tool.linker")
-
-        local srcdir = package:sourcedir()
-        local packagedir = package:installdir()
-        local apr_dir = package:dep("apr"):installdir()
-        local aprutil_dir = package:dep("apr-util"):installdir()
-        local openssl_dir = package:dep("openssl"):installdir()
-        local zlib_dir = package:dep("zlib"):installdir()
-
-        -- Collect source files
-        local sourcefiles = {
-            path.join(srcdir, "context.c"),
-            path.join(srcdir, "incoming.c"),
-            path.join(srcdir, "outgoing.c"),
-            path.join(srcdir, "ssltunnel.c"),
-        }
-        for _, f in ipairs(os.files(path.join(srcdir, "buckets", "*.c"))) do
-            table.insert(sourcefiles, f)
-        end
-        for _, f in ipairs(os.files(path.join(srcdir, "auth", "*.c"))) do
-            table.insert(sourcefiles, f)
-        end
-
-        -- Compile flags
-        local includedirs = {
-            srcdir,
-            path.join(apr_dir, "include", "apr-1"),
-            path.join(aprutil_dir, "include", "apr-1"),
-            path.join(openssl_dir, "include"),
-            path.join(zlib_dir, "include"),
-        }
-        local defines = {"SERF_SHARED", "OPENSSL_NO_STDIO"}
-
-        -- Get compiler
-        local cc = compiler.load("c")
-
-        -- Compile source files
-        local builddir = path.join(packagedir, "build")
-        os.mkdir(builddir)
-        local objectfiles = {}
-
-        -- Build base flags
-        local base_flags = {}
-        for _, d in ipairs(includedirs) do
-            table.insert(base_flags, "-I" .. d)
-        end
-        for _, d in ipairs(defines) do
-            table.insert(base_flags, "-D" .. d)
-        end
-        if not package:is_debug() then
-            table.insert(base_flags, "-O2")
-            table.insert(base_flags, "-DNDEBUG")
-        else
-            table.insert(base_flags, "-g")
-        end
-
-        for _, src in ipairs(sourcefiles) do
-            local basename = path.filename(src):gsub("%.c$", "")
-            local obj = path.join(builddir, basename .. cc:object_ext())
-            cc:compile(src, obj, {flags = base_flags})
-            table.insert(objectfiles, obj)
-        end
-
-        -- Link shared library
-        local libdir = path.join(packagedir, "lib")
-        os.mkdir(libdir)
-        local libname = "libserf-1" .. (package:is_plat("macosx") and ".dylib" or ".so")
-        local libpath = path.join(libdir, libname)
-
-        local linkdirs = {
-            path.join(apr_dir, "lib"),
-            path.join(aprutil_dir, "lib"),
-            path.join(openssl_dir, "lib"),
-            path.join(zlib_dir, "lib"),
-        }
-        local linklibs = {"ssl", "crypto", "z", "apr-1", "aprutil-1"}
-        if package:is_plat("linux") then
-            table.insert(linklibs, "pthread")
-        end
-
-        local ld = linker.load("cc")
-        local linkflags = {}
-        if package:is_plat("macosx") then
-            table.insert(linkflags, "-Wl,-install_name,@rpath/" .. libname)
-        elseif package:is_plat("linux") then
-            table.insert(linkflags, "-Wl,-soname," .. libname)
-        end
-        ld:link(libpath, objectfiles, {
-            flags = linkflags,
-            linkdirs = linkdirs,
-            links = linklibs,
-            shared = true,
-        })
-
-        -- Install headers
-        local incdir = path.join(packagedir, "include", "serf-1")
-        os.mkdir(incdir)
-        os.cp(path.join(srcdir, "serf.h"), incdir)
-        os.cp(path.join(srcdir, "serf_bucket_types.h"), incdir)
-        os.cp(path.join(srcdir, "serf_bucket_util.h"), incdir)
-    end)
-package_end()
-
--- 8. subversion (depends: all above)
+-- 7. subversion
 package("subversion")
     set_sourcedir(path.join(rootdir, "subversion"))
-    add_deps("sqlite", "openssl", "serf", "apr-util", "apr", "libexpat", "zlib")
+    add_deps("sqlite", "openssl", "apr-util", "apr", "libexpat", "zlib")
     on_install(function (package)
-        -- Generate cmake targets file
         local python = "python3"
-        if package:is_plat("windows") then
-            python = "python"
-        end
+        if package:is_plat("windows") then python = "python" end
         os.vrunv(python, {"gen-make.py", "-t", "cmake"})
+
+        -- Find serf in the install directory (built as target)
+        local installdir = path.join(rootdir, "build", "install")
+
         import("package.tools.cmake").install(package, {
             "-DCMAKE_BUILD_TYPE=" .. (package:is_debug() and "Debug" or "Release"),
             "-DBUILD_SHARED_LIBS=ON",
+            "-DCMAKE_PREFIX_PATH=" .. installdir,
+            "-DSerf_ROOT=" .. installdir,
             "-DSVN_ENABLE_TESTS=OFF",
             "-DSVN_ENABLE_TOOLS=OFF",
             "-DSVN_ENABLE_NLS=OFF",
@@ -347,19 +202,81 @@ package("subversion")
 package_end()
 
 -- ============================================================
--- Build target - triggers package builds
+-- Install all packages first
 -- ============================================================
 add_requires("zlib", "libexpat", "openssl", "sqlite",
-             "apr", "apr-util", "serf", "subversion")
+             "apr", "apr-util")
 
-target("svn-build")
-    set_kind("phony")
-    add_packages("zlib", "libexpat", "openssl", "sqlite",
-                 "apr", "apr-util", "serf", "subversion")
+-- ============================================================
+-- Serf target (built with xmake, not as package)
+-- ============================================================
+target("serf")
+    set_kind("shared")
+    set_basename("serf-1")
+
+    -- Source files
+    add_files("serf/context.c", "serf/incoming.c", "serf/outgoing.c", "serf/ssltunnel.c")
+    add_files("serf/buckets/*.c")
+    add_files("serf/auth/*.c")
+
+    -- Include paths and links will be set in on_load
+    add_includedirs("serf")
+
+    -- Defines
+    add_defines("SERF_SHARED", "OPENSSL_NO_STDIO")
+
+    -- Platform specific
+    if is_plat("linux") then
+        add_syslinks("pthread")
+    end
+
+    -- Output to install directory
+    set_targetdir("build/install/lib")
+
+    -- Load package paths dynamically
+    on_load(function (target)
+        -- Find package install directories from cache
+        local rootdir = os.scriptdir()
+        local pkg_cache = path.join(rootdir, "build", ".packages")
+        local pkg_names = {"apr", "apr-util", "openssl", "zlib", "libexpat"}
+        for _, name in ipairs(pkg_names) do
+            local first_char = name:sub(1, 1)
+            local pkg_path = path.join(pkg_cache, first_char, name, "latest")
+            if os.isdir(pkg_path) then
+                for _, hash_dir in ipairs(os.dirs(path.join(pkg_path, "*"))) do
+                    if path.filename(hash_dir) ~= "cache" and os.isdir(path.join(hash_dir, "lib")) then
+                        target:add("includedirs", path.join(hash_dir, "include"))
+                        target:add("includedirs", path.join(hash_dir, "include", "apr-1"))
+                        target:add("linkdirs", path.join(hash_dir, "lib"))
+                        break
+                    end
+                end
+            end
+        end
+        -- Add link libraries
+        target:add("links", "ssl", "crypto", "z", "apr-1", "aprutil-1")
+    end)
+
+    -- After build, copy headers
+    after_build(function (target)
+        local incdir = path.join(os.scriptdir(), "build", "install", "include", "serf-1")
+        os.mkdir(incdir)
+        os.cp(path.join(os.scriptdir(), "serf", "serf.h"), incdir)
+        os.cp(path.join(os.scriptdir(), "serf", "serf_bucket_types.h"), incdir)
+        os.cp(path.join(os.scriptdir(), "serf", "serf_bucket_util.h"), incdir)
+    end)
 target_end()
 
 -- ============================================================
--- Install target - copies files and fixes rpath
+-- Build target
+-- ============================================================
+target("svn-build")
+    set_kind("phony")
+    add_deps("serf")
+target_end()
+
+-- ============================================================
+-- Install target
 -- ============================================================
 target("subversion-install")
     set_kind("phony")
@@ -384,7 +301,6 @@ target("subversion-install")
 
         -- Copy files from all package directories
         for _, pkg_dir in ipairs(pkg_dirs) do
-            -- Copy lib files
             if os.isdir(path.join(pkg_dir, "lib")) then
                 os.mkdir(path.join(installdir, "lib"))
                 for _, f in ipairs(os.files(path.join(pkg_dir, "lib", "*"))) do
@@ -393,14 +309,12 @@ target("subversion-install")
                     end
                 end
             end
-            -- Copy bin files (DLLs on Windows)
             if os.isdir(path.join(pkg_dir, "bin")) then
                 os.mkdir(path.join(installdir, "bin"))
                 for _, f in ipairs(os.files(path.join(pkg_dir, "bin", "*"))) do
                     os.cp(f, path.join(installdir, "bin"))
                 end
             end
-            -- Copy include files
             if os.isdir(path.join(pkg_dir, "include")) then
                 os.mkdir(path.join(installdir, "include"))
                 for _, d in ipairs(os.dirs(path.join(pkg_dir, "include", "*"))) do
@@ -418,17 +332,14 @@ target("subversion-install")
 
         -- Fix dynamic library paths for distribution
         if os.host() == "macosx" then
-            -- macOS: use install_name_tool and otool
             local bindir = path.join(installdir, "bin")
             local libdir = path.join(installdir, "lib")
 
-            -- Fix library install names
             for _, libfile in ipairs(os.files(path.join(libdir, "*.dylib"))) do
                 local libname = path.filename(libfile)
                 os.vrunv("install_name_tool", {"-id", "@rpath/" .. libname, libfile}, {try = true})
             end
 
-            -- Fix absolute path references in dylibs
             for _, libfile in ipairs(os.files(path.join(libdir, "*.dylib"))) do
                 local otool_out = os.iorunv("otool", {"-L", libfile})
                 if otool_out then
@@ -442,7 +353,6 @@ target("subversion-install")
                 end
             end
 
-            -- Fix binaries
             for _, binfile in ipairs(os.files(path.join(bindir, "*"))) do
                 local fname = path.filename(binfile)
                 if fname ~= "c_rehash" and not fname:match("-config$") then
@@ -471,16 +381,13 @@ target("subversion-install")
             end
 
         elseif os.host() == "linux" then
-            -- Linux: use patchelf
             local bindir = path.join(installdir, "bin")
             local libdir = path.join(installdir, "lib")
 
-            -- Set RPATH for libraries
             for _, libfile in ipairs(os.files(path.join(libdir, "*.so*"))) do
                 os.vrunv("patchelf", {"--set-rpath", "$ORIGIN", libfile}, {try = true})
             end
 
-            -- Set RPATH for binaries
             for _, binfile in ipairs(os.files(path.join(bindir, "*"))) do
                 local f = io.open(binfile, "rb")
                 if f then
@@ -493,11 +400,9 @@ target("subversion-install")
             end
 
         elseif os.host() == "windows" then
-            -- Windows: DLLs should be in the same directory as executables
             local bindir = path.join(installdir, "bin")
             local libdir = path.join(installdir, "lib")
 
-            -- Copy DLLs to bin directory
             if os.isdir(libdir) then
                 os.mkdir(bindir)
                 for _, dll in ipairs(os.files(path.join(libdir, "*.dll"))) do
