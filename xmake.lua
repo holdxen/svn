@@ -193,10 +193,10 @@ package("subversion")
 package_end()
 
 -- ============================================================
--- Install dependencies first
+-- Install all dependencies (including subversion)
 -- ============================================================
 add_requires("zlib", "libexpat", "openssl", "sqlite",
-             "apr", "apr-util")
+             "apr", "apr-util", "subversion")
 
 -- ============================================================
 -- Serf target (built with xmake, not as package)
@@ -220,6 +220,8 @@ target("serf")
     -- System libraries
     if is_plat("linux") then
         add_syslinks("pthread")
+    elseif is_plat("windows") then
+        add_syslinks("ws2_32", "crypt32", "rpcrt4", "advapi32", "user32", "gdi32")
     end
 
     -- Output to install directory
@@ -259,11 +261,13 @@ target("serf")
 target_end()
 
 -- ============================================================
--- Build target - triggers serf build and dependency install
+-- Build target - triggers serf build and all package installs
 -- ============================================================
 target("svn-build")
     set_kind("phony")
     add_deps("serf")
+    add_packages("zlib", "libexpat", "openssl", "sqlite",
+                 "apr", "apr-util", "subversion")
 target_end()
 
 -- ============================================================
