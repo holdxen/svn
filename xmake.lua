@@ -193,10 +193,10 @@ package("subversion")
 package_end()
 
 -- ============================================================
--- Install all dependencies (including subversion)
+-- Install dependencies (except subversion, which needs serf)
 -- ============================================================
 add_requires("zlib", "libexpat", "openssl", "sqlite",
-             "apr", "apr-util", "subversion")
+             "apr", "apr-util")
 
 -- ============================================================
 -- Serf target (built with xmake, not as package)
@@ -261,13 +261,11 @@ target("serf")
 target_end()
 
 -- ============================================================
--- Build target - triggers serf build and all package installs
+-- Build target - triggers serf build
 -- ============================================================
 target("svn-build")
     set_kind("phony")
     add_deps("serf")
-    add_packages("zlib", "libexpat", "openssl", "sqlite",
-                 "apr", "apr-util", "subversion")
 target_end()
 
 -- ============================================================
