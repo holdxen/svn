@@ -84,30 +84,28 @@ package("openssl")
     end)
 package_end()
 
--- 4. sqlite
-package("sqlite")
-    set_sourcedir(path.join(rootdir, "sqlite"))
-    on_install("linux", "macosx", function (package)
-        import("package.tools.autoconf").install(package, {
-            "--enable-shared", "--disable-static",
-        })
-    end)
-    on_install("windows", function (package)
-        local packagedir = package:installdir()
-        local srcdir = package:sourcedir()
-        local obj = path.join(packagedir, "sqlite3.obj")
-        os.vrunv("cl", {"/c", path.join(srcdir, "sqlite3.c"), "/Fo" .. obj})
-        local libdir = path.join(packagedir, "lib")
-        local bindir = path.join(packagedir, "bin")
-        os.mkdir(libdir)
-        os.mkdir(bindir)
-        os.vrunv("link", {"/DLL", "/OUT:" .. path.join(bindir, "sqlite3.dll"), "/IMPLIB:" .. path.join(libdir, "sqlite3.lib"), obj})
-        local incdir = path.join(packagedir, "include")
+-- 4. sqlite (single file: sqlite3.c)
+target("sqlite3")
+    set_kind("shared")
+    set_targetdir(path.join(rootdir, "build", "install", "lib"))
+    add_files(path.join(rootdir, "sqlite", "sqlite3.c"))
+    add_includedirs(path.join(rootdir, "sqlite"))
+    add_headerfiles(path.join(rootdir, "sqlite", "sqlite3.h"))
+    add_headerfiles(path.join(rootdir, "sqlite", "sqlite3ext.h"))
+    if is_plat("linux") then
+        add_syslinks("pthread", "dl", "m")
+    elseif is_plat("windows") then
+        add_defines("SQLITE_API=__declspec(dllexport)")
+    end
+    after_install(function (target)
+        -- Copy headers to install directory
+        local installdir = path.join(os.scriptdir(), "build", "install")
+        local incdir = path.join(installdir, "include")
         os.mkdir(incdir)
-        os.cp(path.join(srcdir, "sqlite3.h"), incdir)
-        os.cp(path.join(srcdir, "sqlite3ext.h"), incdir)
+        os.cp(path.join(os.scriptdir(), "sqlite", "sqlite3.h"), incdir)
+        os.cp(path.join(os.scriptdir(), "sqlite", "sqlite3ext.h"), incdir)
     end)
-package_end()
+target_end()
 
 -- 5. apr
 package("apr")
@@ -171,12 +169,12 @@ package_end()
 -- 7. subversion (depends on all packages except serf)
 package("subversion")
     set_sourcedir(path.join(rootdir, "subversion"))
-    add_deps("sqlite", "openssl", "apr-util", "apr", "libexpat", "zlib")
+    add_deps("openssl", "apr-util", "apr", "libexpat", "zlib")
     on_install(function (package)
         local python = package:is_plat("windows") and "python" or "python3"
         os.vrunv(python, {"gen-make.py", "-t", "cmake"})
 
-        -- Find serf in the install directory (built as target)
+        -- Find dependencies in the install directory
         local installdir = path.join(rootdir, "build", "install")
 
         import("package.tools.cmake").install(package, {
@@ -184,6 +182,8 @@ package("subversion")
             "-DBUILD_SHARED_LIBS=ON",
             "-DCMAKE_PREFIX_PATH=" .. installdir,
             "-DSerf_ROOT=" .. installdir,
+            "-DSQLite3_ROOT=" .. installdir,
+            "-DSVN_SQLITE_USE_AMALGAMATION=OFF",
             "-DSVN_ENABLE_TESTS=OFF",
             "-DSVN_ENABLE_TOOLS=OFF",
             "-DSVN_ENABLE_NLS=OFF",
@@ -200,7 +200,7 @@ package_end()
 -- ============================================================
 -- Install dependencies (except subversion, which needs serf)
 -- ============================================================
-add_requires("zlib", "libexpat", "openssl", "sqlite",
+add_requires("zlib", "libexpat", "openssl",
              "apr", "apr-util")
 
 -- ============================================================
