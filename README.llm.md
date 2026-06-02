@@ -1,284 +1,433 @@
-# Subversion Build System - LLM Reference
+# Subversion Build System - LLM Deep Reference
 
-## Project Structure
+## Project Overview
+
+This project builds Apache Subversion and all its dependencies from source using xmake. The key challenge is that each sub-project uses a different build system (cmake, autoconf, SCons, custom Configure), and xmake must orchestrate them all.
+
+## Directory Structure
 
 ```
 /Users/zhouguiqing/Documents/Code/Build/svn/
-├── xmake.lua          # Main build configuration (17KB)
-├── build.sh           # One-step build script
-├── generate.lua       # Helper script for serf
-├── XMAKE_SKILL.md     # xmake reference manual
+├── xmake.lua              # Main build configuration (17KB)
+├── build.sh               # One-step build wrapper script
+├── generate.lua           # Helper to generate serf xmake.lua (unused in final)
+├── XMAKE_SKILL.md         # xmake API reference
+├── README.md              # Human-readable docs
+├── README.llm.md          # This file
 │
-├── zlib/              # Compression library (cmake)
-├── libexpat/          # XML parser (cmake)
-├── openssl/           # TLS/SSL (Configure/make)
-├── sqlite/            # Database (autoconf)
-├── apr/               # Apache Portable Runtime (autoconf/cmake)
-├── apr-util/          # APR utilities (autoconf/cmake)
-├── serf/              # HTTP client (xmake target)
-├── subversion/        # VCS (cmake)
+├── zlib/                  # Compression library
+├── libexpat/              # XML parser library
+├── openssl/               # TLS/SSL library
+├── sqlite/                # Embedded SQL database
+├── apr/                   # Apache Portable Runtime
+├── apr-util/              # APR utility library
+├── serf/                  # HTTP client library
+├── subversion/            # Version control system
 │
 └── build/
-    ├── .packages/     # xmake package cache
-    └── install/       # Output directory
-        ├── bin/       # Executables (svn, svnadmin, etc.)
-        ├── lib/       # Shared libraries (.dylib/.so/.dll)
-        └── include/   # Headers
+    ├── .packages/         # xmake package cache (auto-managed)
+    │   ├── z/zlib/latest/<hash>/     # Each package has unique hash
+    │   ├── l/libexpat/latest/<hash>/
+    │   └── ...
+    └── install/           # Final output directory
+        ├── bin/           # Executables
+        ├── lib/           # Shared libraries
+        └── include/       # Headers
 ```
 
-## Build System
+## Architecture Decisions
 
-**Tool**: xmake v2.8.0+ (Lua-based build system)
+### 1. Why Mix Package and Target?
 
-**Key files**:
-- `xmake.lua`: Defines 7 packages + 2 targets
-- `build.sh`: Wrapper script (3 steps)
+**Problem**: xmake has two build mechanisms:
+- `package()`: For external dependencies, uses `on_install` callback
+- `target()`: For project targets, uses `add_files` to compile
 
-## Dependencies
+**Decision**: Use `package()` for most components, `target()` only for serf.
 
+**Reason**:
 ```
-subversion (package, cmake)
-├── sqlite (package, autoconf)
-├── openssl (package, Configure/make)
-│   └── zlib (package, cmake)
-├── serf (target, xmake add_files)
-│   ├── apr (package, autoconf/cmake)
-│   │   └── libexpat (package, cmake)
-│   ├── apr-util (package, autoconf/cmake)
-│   │   ├── apr
-│   │   └── libexpat
-│   ├── openssl
-│   └── zlib
-├── apr
-├── apr-util
-├── libexpat
-└── zlib
+zlib, libexpat, openssl, sqlite, apr, apr-util, subversion
+    → Have cmake or autoconf support
+    → Use package() with import("package.tools.cmake").install()
+    → xmake handles all cross-platform details
+
+serf
+    → Only has SCons (Python-based), no cmake/autoconf
+    → SCons cannot be called from xmake (would need Python)
+    → Use target() with add_files() to compile directly
+    → xmake handles compiler selection (cc/cl/clang)
 ```
 
-## Package vs Target
+### 2. Why serf Cannot Be a Package
 
-| Component | Type | Build Method | Reason |
-|-----------|------|--------------|--------|
-| zlib | package | cmake | Has CMakeLists.txt |
-| libexpat | package | cmake | Has CMakeLists.txt |
-| openssl | package | Configure/make | No cmake, uses Perl |
-| sqlite | package | autoconf | Has configure script |
-| apr | package | autoconf/cmake | Both available |
-| apr-util | package | autoconf/cmake | Both available |
-| serf | target | xmake add_files | No cmake, SCons only |
-| subversion | package | cmake | Has CMakeLists.txt |
+**Attempted approaches that failed**:
 
-## Build Commands
+1. **Call SCons from on_install**: SCons requires Python, adds dependency
+2. **Call xmake from on_install**: Causes deadlock (xmake holds project lock)
+3. **Use `import("core.tool.compiler")` API**: Also causes deadlock (same lock)
+4. **Use `os.vrunv("cc", ...)` directly**: Works but not cross-platform
 
-```bash
-# Full build (recommended)
-./build.sh
-
-# Manual steps
-xmake build -y svn-build      # Build serf + install deps
-xmake require -y subversion   # Build subversion
-xmake install -y subversion-install  # Copy to build/install
-
-# Clean
-rm -rf build .xmake
-```
-
-## xmake.lua Architecture
-
-### Packages (on_install callbacks)
-
-```lua
-package("zlib")
-    set_sourcedir(path.join(rootdir, "zlib"))
-    on_install(function (package)
-        import("package.tools.cmake").install(package, {...})
-    end)
-package_end()
-```
-
-### Serf Target (on_load callback)
-
+**Final solution**: Define serf as a `target()` with `add_files()`:
 ```lua
 target("serf")
     set_kind("shared")
-    add_files("serf/*.c", "serf/buckets/*.c", "serf/auth/*.c")
+    add_files("serf/context.c", "serf/buckets/*.c", "serf/auth/*.c")
+    -- xmake automatically selects cc/cl/clang based on platform
+target_end()
+```
+
+This is the ONLY way to build serf without external tools and without deadlock.
+
+### 3. Why Two-Step Build?
+
+**Problem**: serf is a `target()`, subversion is a `package()`. They have different build triggers:
+- `target()`: Built by `xmake build`
+- `package()`: Built by `xmake require` or `add_requires`
+
+**Why not one step?**
+```lua
+-- This WON'T work:
+add_requires("subversion")  -- Tries to install subversion package
+target("svn-build")
+    add_deps("serf")        -- serf not built yet!
+    add_packages("subversion")  -- subversion's on_install runs, can't find serf
+```
+
+The `package("subversion").on_install` runs during `xmake build`, but serf target hasn't been compiled yet. cmake fails with "Could NOT find Serf".
+
+**Solution**: Two separate commands:
+```bash
+xmake build -y svn-build      # Step 1: Build serf target
+xmake require -y subversion   # Step 2: Build subversion package (serf now exists)
+```
+
+### 4. Why Use `on_load` for serf?
+
+**Problem**: serf needs to find header files from apr, openssl, zlib etc. These paths are in xmake's package cache (`build/.packages/<letter>/<name>/<hash>/`), with unpredictable hash values.
+
+**Attempted approaches**:
+
+1. **Hardcode paths**: Won't work, hash changes on rebuild
+2. **Use `add_packages("apr")`**: Doesn't inject include/link paths into target
+3. **Use `target:pkg("apr")`**: Returns nil because package not bound to target via `add_packages`
+4. **Use `project.required_package("apr")`**: Works!
+
+**Final solution**:
+```lua
+target("serf")
     on_load(function (target)
-        -- Dynamically find package paths
         import("core.project.project")
         local pkg = project.required_package("apr")
-        target:add("includedirs", pkg:installdir() .. "/include")
+        if pkg then
+            local dir = pkg:installdir()
+            target:add("includedirs", path.join(dir, "include"))
+            target:add("linkdirs", path.join(dir, "lib"))
+        end
         target:add("links", "ssl", "crypto", "z", "apr-1", "aprutil-1")
     end)
 target_end()
 ```
 
-### Install Target (after_install callback)
+**Why `on_load` and not `on_build`?**
+- `on_load`: Runs when target is loaded, before any build step
+- `on_build`: Runs during compilation, too late for include paths
+- Include paths must be available at load time for the compiler to find headers
+
+### 5. Why `{public = true}` for Include Paths?
 
 ```lua
-target("subversion-install")
-    set_kind("phony")
-    on_install(function (target)
-        -- Copy from .packages cache to build/install
-        -- Fix rpath (macOS: install_name_tool, Linux: patchelf)
-    end)
-target_end()
+target:add("includedirs", path.join(dir, "include"), {public = true})
 ```
 
-## Cross-Platform Handling
+**Reason**: If another target depends on serf (e.g., subversion in future), it needs to inherit serf's include paths. `{public = true}` makes the path transitive.
 
-### macOS
-- Compiler: cc (Apple Clang)
-- Library extension: .dylib
-- Rpath fix: `install_name_tool -id @rpath/libfoo.dylib`
-- Binary fix: `install_name_tool -add_rpath @executable_path/../lib`
+Without it, any target doing `add_deps("serf")` wouldn't get apr/openssl headers.
 
-### Linux
-- Compiler: cc (gcc/clang)
-- Library extension: .so
-- Rpath fix: `patchelf --set-rpath $ORIGIN`
+### 6. Why Each Package Uses Specific Build Method
 
-### Windows
-- Compiler: cl (MSVC)
-- Library extension: .dll + .lib
-- System libs: ws2_32, crypt32, rpcrt4, advapi32, user32, gdi32
+| Package | Method | Reason |
+|---------|--------|--------|
+| zlib | cmake | Has CMakeLists.txt, cmake is most cross-platform |
+| libexpat | cmake | Has CMakeLists.txt, disables tools/examples |
+| openssl | Configure/make | No cmake, uses Perl Configure script |
+| sqlite | autoconf (Unix), cl/link (Windows) | Has configure on Unix, direct compile on Windows |
+| apr | autoconf (Unix), cmake (Windows) | CMakeLists.txt has bugs on macOS (includes win32 files) |
+| apr-util | autoconf (Unix), cmake (Windows) | Needs apr source path for buildconf |
+| serf | xmake target | No cmake/autoconf, only SCons (unusable) |
+| subversion | cmake | Has CMakeLists.txt, needs python3 gen-make.py first |
 
-## Key xmake APIs Used
+### 7. Why apr Uses autoconf on macOS?
+
+**Problem**: apr's CMakeLists.txt includes both unix and win32 source files unconditionally:
+```cmake
+SET(APR_SOURCES
+  atomic/win32/apr_atomic.c    # Should be unix/ on macOS!
+  file_io/unix/copy.c
+  file_io/win32/buffer.c       # This fails on macOS
+  ...
+)
+```
+
+This causes compilation errors on macOS because win32 headers don't exist.
+
+**Solution**: Use autoconf which correctly selects platform-specific files:
+```lua
+on_install("linux", "macosx", function (package)
+    os.vrunv("sh", {"./buildconf"})  -- Generates configure from configure.in
+    import("package.tools.autoconf").install(package, configs)
+end)
+on_install("windows", function (package)
+    import("package.tools.cmake").install(package, configs)  -- cmake works on Windows
+end)
+```
+
+### 8. Why apr-util Needs Source Path?
 
 ```lua
--- Package management
-add_requires("pkg", {system = false})
-add_requireconfs("*", {system = false})
+os.vrunv("sh", {"./buildconf", "--with-apr=" .. apr_src})
+```
 
--- Package definition
+apr-util's `buildconf` script needs the APR **source directory** (not installed directory) to generate configure. This is because it shares some m4 macros from apr's source.
+
+### 9. Why Remove Static Libraries?
+
+```lua
+os.rm(path.join(packagedir, "lib", "*.a"))
+```
+
+**Reason**: We want only shared libraries for:
+1. Smaller distribution size
+2. Single copy of code in memory
+3. Easier dependency management
+4. User requirement: "编译成动态库"
+
+### 10. Why `add_requireconfs("*", {system = false})`?
+
+```lua
+add_requireconfs("*", {system = false})
+```
+
+**Reason**: Without this, xmake may detect system-installed libraries (e.g., macOS has zlib.dylib in /usr/lib) and skip building from source. We want consistent builds from our local sources.
+
+### 11. Install Script Design
+
+The `subversion-install` target copies files from xmake's package cache to `build/install/`:
+
+```lua
+-- Package cache structure:
+build/.packages/
+├── z/zlib/latest/<hash>/lib/libz.dylib
+├── l/libexpat/latest/<hash>/lib/libexpat.dylib
+├── o/openssl/latest/<hash>/lib/libssl.dylib
+└── ...
+```
+
+**Why not use `xmake install` directly?**
+- Each package installs to its own hash-named directory
+- We want everything in one flat `build/install/` for distribution
+- Need to fix rpath/dylib paths for portability
+
+### 12. macOS Rpath Fix
+
+**Problem**: Dynamic libraries reference each other by absolute path:
+```
+libsvn_client-1.dylib:
+    /Users/.../build/.packages/a/apr/latest/<hash>/lib/libapr-1.0.dylib
+```
+
+This breaks when moved to another machine.
+
+**Solution**: Three-step fix:
+1. Change library install names to `@rpath/`:
+   ```bash
+   install_name_tool -id @rpath/libapr-1.0.dylib libapr-1.0.dylib
+   ```
+2. Update all references in libraries:
+   ```bash
+   install_name_tool -change /old/path @rpath/libapr-1.0.dylib libfoo.dylib
+   ```
+3. Add rpath to binaries:
+   ```bash
+   install_name_tool -add_rpath @executable_path/../lib svn
+   ```
+
+Result: `svn` looks for libraries relative to itself, portable across machines.
+
+### 13. Linux Rpath Fix
+
+```bash
+patchelf --set-rpath $ORIGIN/../lib svn
+```
+
+`$ORIGIN` expands to the directory containing the executable, making it relative.
+
+### 14. Windows Handling
+
+On Windows:
+- DLLs must be in same directory as executables (or in PATH)
+- The install script copies `.dll` files from `lib/` to `bin/`
+- No rpath equivalent needed
+
+### 15. Why `build.sh` Wrapper?
+
+**Problem**: xmake cannot orchestrate target→package ordering in one command.
+
+**Solution**: Shell script that runs three commands sequentially:
+```bash
+#!/bin/bash
+xmake build -y svn-build      # Build serf target
+xmake require -y subversion   # Build subversion package
+xmake install -y subversion-install  # Copy to build/install
+```
+
+## xmake.lua Structure
+
+```
+xmake.lua
+├── Global settings (set_xmakever, add_rules, add_requireconfs)
+├── Package definitions (1-7)
+│   ├── zlib (cmake)
+│   ├── libexpat (cmake)
+│   ├── openssl (Configure/make)
+│   ├── sqlite (autoconf/cl)
+│   ├── apr (autoconf/cmake)
+│   ├── apr-util (autoconf/cmake)
+│   └── subversion (cmake)
+├── add_requires() - triggers package installation
+├── Target: serf (add_files, on_load for deps)
+├── Target: svn-build (phony, depends on serf)
+└── Target: subversion-install (phony, copies files + fixes rpath)
+```
+
+## Key xmake APIs
+
+```lua
+-- Package system
 package("name")
-    set_sourcedir(path)
-    add_deps("dep1", "dep2")
-    on_install(function (package)
-        import("package.tools.cmake").install(package, configs)
-        import("package.tools.autoconf").install(package, configs)
+    set_sourcedir(path)           -- Local source directory
+    add_deps("dep1", "dep2")     -- Package dependencies
+    on_install(function (pkg)     -- Build callback
+        import("package.tools.cmake").install(pkg, configs)
+        import("package.tools.autoconf").install(pkg, configs)
     end)
 package_end()
 
--- Target definition
+-- Target system
 target("name")
-    set_kind("shared"/"static"/"binary"/"phony")
-    add_files("src/*.c")
-    add_includedirs("include", {public = true})
-    add_links("lib1", "lib2")
-    add_syslinks("pthread")
-    on_load(function (target) ... end)
-    after_build(function (target) ... end)
-    on_install(function (target) ... end)
+    set_kind("shared")            -- shared/static/binary/phony
+    add_files("src/*.c")          -- Source files (glob supported)
+    add_includedirs("include")    -- Include paths
+    add_links("lib1")             -- Libraries to link
+    add_syslinks("pthread")       -- System libraries (always last)
+    on_load(function (target)     -- Load callback (before build)
+        target:add("includedirs", dir)
+    end)
+    after_build(function (target) -- After build callback
+        os.cp(src, dst)
+    end)
 target_end()
 
--- Script domain
-os.vrunv("cmd", {"arg1", "arg2"})
-os.cp(src, dst)
-os.mkdir(dir)
+-- Package queries
 import("core.project.project")
-project.required_package("name")
+local pkg = project.required_package("name")
+local dir = pkg:installdir()      -- Get install directory
+
+-- File operations
+os.cp(src, dst)                   -- Copy
+os.mkdir(dir)                     -- Create directory
+os.rm(pattern)                    -- Remove files
+os.vrunv("cmd", {"args"})        -- Run command (verbose)
+
+-- Platform detection
+is_plat("macosx", "linux", "windows")
+is_arch("x86_64", "arm64")
+package:is_plat("macosx")
+package:is_arch("arm64")
 ```
 
-## Output Structure
+## Build Flow Diagram
 
 ```
-build/install/
-├── bin/
-│   ├── svn                    # Main client
-│   ├── svnadmin               # Repo admin
-│   ├── svnserve               # Server
-│   ├── svnlook                # Repo inspector
-│   ├── svndumpfilter          # Dump filter
-│   ├── svnsync                # Repo sync
-│   ├── svnversion             # WC version
-│   ├── svnbench               # Benchmark
-│   ├── svnmucc                # Multi-URL commit
-│   ├── svnrdump               # Remote dump
-│   ├── svnfsfs                # FSFS tool
-│   ├── openssl                # OpenSSL CLI
-│   ├── sqlite3                # SQLite CLI
-│   ├── apr-1-config           # APR config
-│   └── apu-1-config           # APR-util config
-├── lib/
-│   ├── libsvn_client-1.dylib  # SVN client lib
-│   ├── libsvn_delta-1.dylib   # SVN delta lib
-│   ├── libsvn_fs-1.dylib      # SVN filesystem
-│   ├── libsvn_ra-1.dylib      # SVN remote access
-│   ├── libsvn_repos-1.dylib   # SVN repository
-│   ├── libsvn_subr-1.dylib    # SVN utilities
-│   ├── libsvn_wc-1.dylib      # SVN working copy
-│   ├── libserf-1.dylib        # HTTP client
-│   ├── libapr-1.dylib         # APR
-│   ├── libaprutil-1.dylib     # APR-util
-│   ├── libssl.dylib           # OpenSSL SSL
-│   ├── libcrypto.dylib        # OpenSSL crypto
-│   ├── libz.dylib             # zlib
-│   ├── libexpat.dylib         # Expat XML
-│   └── libsqlite3.dylib       # SQLite
-└── include/
-    ├── svn/                   # SVN headers
-    ├── serf-1/                # Serf headers
-    ├── apr-1/                 # APR headers
-    ├── openssl/               # OpenSSL headers
-    ├── expat.h                # Expat header
-    ├── sqlite3.h              # SQLite header
-    ├── zlib.h                 # zlib header
-    └── zconf.h                # zlib config
+xmake build -y svn-build
+│
+├── [1] Install packages via add_requires:
+│   ├── zlib (cmake) → build/.packages/z/zlib/<hash>/
+│   ├── libexpat (cmake) → build/.packages/l/libexpat/<hash>/
+│   ├── openssl (Configure) → build/.packages/o/openssl/<hash>/
+│   ├── sqlite (autoconf) → build/.packages/s/sqlite/<hash>/
+│   ├── apr (autoconf) → build/.packages/a/apr/<hash>/
+│   └── apr-util (autoconf) → build/.packages/a/apr-util/<hash>/
+│
+├── [2] Build serf target:
+│   ├── on_load: Find apr/openssl/zlib paths from package cache
+│   ├── add_files: Compile serf/*.c, serf/buckets/*.c, serf/auth/*.c
+│   ├── Link: -lssl -lcrypto -lz -lapr-1 -laprutil-1
+│   ├── Output: build/install/lib/libserf-1.dylib
+│   └── after_build: Copy headers to build/install/include/serf-1/
+│
+└── [3] Done (subversion not built yet)
+
+xmake require -y subversion
+│
+└── [1] Install subversion package:
+    ├── gen-make.py -t cmake (generate cmake targets)
+    ├── cmake with CMAKE_PREFIX_PATH=build/install
+    ├── Finds serf in build/install/lib + build/install/include/serf-1
+    └── Output: build/.packages/s/subversion/<hash>/
+
+xmake install -y subversion-install
+│
+├── [1] Copy from .packages to build/install/
+│   ├── lib/ (all .dylib/.so/.dll, skip .a)
+│   ├── bin/ (all executables)
+│   └── include/ (all headers)
+│
+├── [2] Fix macOS rpaths:
+│   ├── install_name_tool -id @rpath/libfoo.dylib
+│   ├── install_name_tool -change /old/path @rpath/libfoo.dylib
+│   └── install_name_tool -add_rpath @executable_path/../lib
+│
+└── [3] Done (ready for distribution)
 ```
 
-## Version Information
+## Common Issues and Solutions
 
-| Component | Version | License |
-|-----------|---------|---------|
-| Subversion | 1.16.0-dev | Apache-2.0 |
-| APR | 1.7.6 | Apache-2.0 |
-| APR-util | 1.7.0 | Apache-2.0 |
-| OpenSSL | 1.1.1w | Apache-2.0 |
-| SQLite | 3.54.0 | Public Domain |
-| zlib | 1.3.2 | zlib |
-| libexpat | 2.8.1 | MIT |
-| serf | 1.3.10 | Apache-2.0 |
+### Issue: `apr_pools.h file not found`
+**Cause**: serf compiled before apr package installed
+**Fix**: Ensure `xmake build -y svn-build` runs before `xmake require -y subversion`
 
-## Platform Compatibility
+### Issue: `Could NOT find Serf` (cmake error)
+**Cause**: subversion's cmake can't find serf library
+**Fix**: serf must be built first and installed to `build/install/`
 
-| Platform | Architecture | Status |
-|----------|--------------|--------|
-| macOS | arm64 | ✅ Tested |
-| macOS | x86_64 | ✅ Supported |
-| Linux | x86_64 | ✅ Supported |
-| Linux | arm64 | ✅ Supported |
-| Windows | x64 | ⚠️ Needs testing |
-| Windows | x86 | ⚠️ Needs testing |
-
-## Build Time Estimate
-
-| Step | Time (first build) | Time (cached) |
-|------|-------------------|---------------|
-| zlib | ~5s | instant |
-| libexpat | ~5s | instant |
-| openssl | ~60s | instant |
-| sqlite | ~10s | instant |
-| apr | ~15s | instant |
-| apr-util | ~10s | instant |
-| serf | ~2s | instant |
-| subversion | ~30s | instant |
-| install | ~5s | ~5s |
-| **Total** | **~2-3 min** | **~10s** |
-
-## Troubleshooting
-
-### Issue: `apr_pools.h not found`
-**Cause**: Dependencies not built yet
-**Fix**: Run `xmake build -y svn-build` first
-
-### Issue: `Could NOT find Serf`
-**Cause**: serf not built before subversion
-**Fix**: Run `xmake build -y svn-build` before `xmake require -y subversion`
+### Issue: `xmake` hangs/deadlocks
+**Cause**: Calling `xmake` or `os.vrunv("cc", ...)` inside `on_install` callback
+**Root cause**: xmake holds project-level lock, child process waits for same lock
+**Fix**: Use `add_files()` in target, not manual compilation in package
 
 ### Issue: `dyld Library not loaded` (macOS)
-**Cause**: Rpath not set correctly
-**Fix**: Run `xmake install -y subversion-install` to fix paths
+**Cause**: Absolute paths in dylib references
+**Fix**: Run `xmake install -y subversion-install` which fixes rpaths
 
-### Issue: `xmake` command hangs
-**Cause**: Deadlock from calling xmake inside xmake callback
-**Fix**: Kill process, use `build.sh` instead of manual commands
+### Issue: `target:pkg("name")` returns nil
+**Cause**: Package not bound to target via `add_packages()`
+**Fix**: Use `project.required_package("name")` instead
+
+### Issue: `cannot import module: package.manager.install_requires`
+**Cause**: Module doesn't exist in xmake
+**Fix**: Don't try to install packages from within callbacks
+
+### Issue: Windows serf compilation fails
+**Cause**: serf needs Windows system libraries
+**Fix**: Add `add_syslinks("ws2_32", "crypt32", "rpcrt4", "advapi32", "user32", "gdi32")`
+
+## Design Principles
+
+1. **Never call xmake from xmake**: Avoids deadlock
+2. **Use add_files, not manual compilation**: Cross-platform automatically
+3. **Use {public = true} for transitive deps**: Include paths propagate
+4. **Use project.required_package()**: Reliable way to find packages
+5. **Fix rpaths at install time**: Ensures portability
+6. **Remove static libs**: Only keep shared for distribution
+7. **Use system = false**: Consistent builds from source
