@@ -60,7 +60,7 @@ package("openssl")
                 table.insert(configs, 1, "linux-x86_64")
             elseif package:is_arch("x86") then
                 table.insert(configs, 1, "linux-elf")
-            elseif package:is_arch("arm64") then
+            elseif package:arch() == "arm64-v8a" or package:arch() == "aarch64" then
                 table.insert(configs, 1, "linux-aarch64")
             end
         elseif package:is_plat("windows") then
