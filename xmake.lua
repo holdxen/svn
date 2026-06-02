@@ -8,9 +8,6 @@ add_requireconfs("*", {system = false})
 
 local rootdir = os.scriptdir()
 
--- Shared install prefix for all dependencies
-local installdir = path.join(rootdir, "build", "install")
-
 -- ============================================================
 -- Package definitions
 -- ============================================================
@@ -276,18 +273,24 @@ package("subversion")
 package_end()
 
 -- ============================================================
--- Main target
+-- Build target - triggers package builds
 -- ============================================================
 add_requires("zlib", "libexpat", "openssl", "sqlite",
              "apr", "apr-util", "serf", "subversion")
 
-target("subversion-build")
+target("svn-build")
     set_kind("phony")
     add_packages("zlib", "libexpat", "openssl", "sqlite",
                  "apr", "apr-util", "serf", "subversion")
+target_end()
 
-    -- Install: copy all built files to the install directory
-    after_install(function (target)
+-- ============================================================
+-- Install target - copies files and fixes rpath
+-- ============================================================
+target("subversion-install")
+    set_kind("phony")
+
+    on_install(function (target)
         local installdir = path.join(os.scriptdir(), "build", "install")
 
         -- Get all package install directories from cache
