@@ -97,7 +97,7 @@ target("sqlite3")
     elseif is_plat("windows") then
         add_defines("SQLITE_API=__declspec(dllexport)")
     end
-    after_install(function (target)
+    after_build(function (target)
         -- Copy headers to install directory
         local installdir = path.join(os.scriptdir(), "build", "install")
         local incdir = path.join(installdir, "include")
@@ -177,12 +177,22 @@ package("subversion")
         -- Find dependencies in the install directory
         local installdir = path.join(rootdir, "build", "install")
 
+        local sqlite3_lib
+        if package:is_plat("windows") then
+            sqlite3_lib = path.join(installdir, "lib", "sqlite3.lib")
+        elseif package:is_plat("macosx") then
+            sqlite3_lib = path.join(installdir, "lib", "libsqlite3.dylib")
+        else
+            sqlite3_lib = path.join(installdir, "lib", "libsqlite3.so")
+        end
+
         import("package.tools.cmake").install(package, {
             "-DCMAKE_BUILD_TYPE=" .. (package:is_debug() and "Debug" or "Release"),
             "-DBUILD_SHARED_LIBS=ON",
             "-DCMAKE_PREFIX_PATH=" .. installdir,
             "-DSerf_ROOT=" .. installdir,
-            "-DSQLite3_ROOT=" .. installdir,
+            "-DSQLite3_LIBRARY=" .. sqlite3_lib,
+            "-DSQLite3_INCLUDE_DIR=" .. path.join(installdir, "include"),
             "-DSVN_SQLITE_USE_AMALGAMATION=OFF",
             "-DSVN_ENABLE_TESTS=OFF",
             "-DSVN_ENABLE_TOOLS=OFF",
@@ -270,7 +280,7 @@ target_end()
 -- ============================================================
 target("svn-build")
     set_kind("phony")
-    add_deps("serf")
+    add_deps("serf", "sqlite3")
 target_end()
 
 -- ============================================================
