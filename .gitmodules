@@ -1,3 +1,27 @@
 [submodule "libexpat"]
 	path = libexpat
 	url = https://github.com/libexpat/libexpat.git
+[submodule "apr"]
+	path = apr
+	url = https://github.com/apache/apr.git
+[submodule "subversion"]
+	path = subversion
+	url = https://github.com/apache/subversion.git
+[submodule "apr-util"]
+	path = apr-util
+	url = https://github.com/apache/apr-util.git
+[submodule "apr-iconv"]
+	path = apr-iconv
+	url = https://github.com/apache/apr-iconv.git
+[submodule "serf"]
+	path = serf
+	url = https://github.com/apache/serf.git
+[submodule "openssl"]
+	path = openssl
+	url = https://github.com/openssl/openssl.git
+[submodule "sqlite"]
+	path = sqlite
+	url = https://github.com/sqlite/sqlite.git
+[submodule "zlib"]
+	path = zlib
+	url = https://github.com/madler/zlib.git
