@@ -52,13 +52,18 @@ package("openssl")
             "--with-zlib-include=" .. path.join(zlib_dir, "include"),
             "--with-zlib-lib=" .. path.join(zlib_dir, "lib"),
         }
+	print("config", configs)
+	print("plat", package:plat())
+	print("arch", package:arch())
         if package:is_debug() then table.insert(configs, "-g") end
         if package:is_plat("macosx") then
             table.insert(configs, 1, package:is_arch("x86_64") and "darwin64-x86_64-cc" or "darwin64-arm64-cc")
         elseif package:is_plat("linux") then
             if package:is_arch("x86_64") then
+		  print("x86_64")
                 table.insert(configs, 1, "linux-x86_64")
             elseif package:is_arch("x86") then
+		  print("x86_64")
                 table.insert(configs, 1, "linux-elf")
             elseif package:arch() == "arm64-v8a" or package:arch() == "aarch64" then
                 table.insert(configs, 1, "linux-aarch64")
@@ -383,8 +388,24 @@ target("subversion-install")
             local bindir = path.join(installdir, "bin")
             local libdir = path.join(installdir, "lib")
 
+            -- Helper: replace absolute DT_NEEDED paths with just the filename
+            local function fix_needed(elfpath)
+                local needed_out = os.iorunv("patchelf", {"--print-needed", elfpath}, {try = true})
+                if not needed_out then return end
+                for line in needed_out:gmatch("[^\n]+") do
+                    local needed = line:match("^%s*(.-)%s*$")
+                    if needed and needed:match("^/") then
+                        -- Absolute path in DT_NEEDED, replace with basename
+                        local basename = path.filename(needed)
+                        os.vrunv("patchelf", {"--replace-needed", needed, basename, elfpath}, {try = true})
+                        print("  fixed needed: " .. elfpath .. ": " .. needed .. " -> " .. basename)
+                    end
+                end
+            end
+
             for _, libfile in ipairs(os.files(path.join(libdir, "*.so*"))) do
                 os.vrunv("patchelf", {"--set-rpath", "$ORIGIN", libfile}, {try = true})
+                fix_needed(libfile)
             end
 
             for _, binfile in ipairs(os.files(path.join(bindir, "*"))) do
@@ -394,6 +415,7 @@ target("subversion-install")
                     f:close()
                     if magic and magic:len() >= 4 and magic:byte(1) == 0x7f and magic:byte(2) == 0x45 then
                         os.vrunv("patchelf", {"--set-rpath", "$ORIGIN/../lib", binfile}, {try = true})
+                        fix_needed(binfile)
                     end
                 end
             end
