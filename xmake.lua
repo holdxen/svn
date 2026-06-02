@@ -3,21 +3,17 @@ set_xmakever("2.8.0")
 
 add_rules("mode.debug", "mode.release")
 
--- Force all packages to build from source, not use system packages
-add_requireconfs("*", {system = false})
-
 local rootdir = os.scriptdir()
 
+-- Shared install prefix for all dependencies
+local installdir = path.join(rootdir, "build", "install")
+
 -- ============================================================
--- Package definitions using xmake's package system
--- Each package installs to xmake's managed package directory
+-- Package definitions
 -- ============================================================
 
 -- 1. zlib (no deps)
 package("zlib")
-    set_homepage("https://zlib.net")
-    set_description("Compression library")
-    set_license("zlib")
     set_sourcedir(path.join(rootdir, "zlib"))
     on_install(function (package)
         import("package.tools.cmake").install(package, {
@@ -29,9 +25,6 @@ package_end()
 
 -- 2. libexpat (no deps)
 package("libexpat")
-    set_homepage("https://libexpat.github.io")
-    set_description("XML parser library")
-    set_license("MIT")
     set_sourcedir(path.join(rootdir, "libexpat", "expat"))
     on_install(function (package)
         import("package.tools.cmake").install(package, {
@@ -47,9 +40,6 @@ package_end()
 
 -- 3. openssl (depends: zlib)
 package("openssl")
-    set_homepage("https://www.openssl.org")
-    set_description("TLS/SSL library")
-    set_license("Apache-2.0")
     set_sourcedir(path.join(rootdir, "openssl"))
     add_deps("zlib")
     on_install(function (package)
@@ -82,19 +72,16 @@ package("openssl")
         os.vrunv("perl", table.join({"Configure"}, configs))
         os.vrunv("make", {"-j", tostring(os.default_njob())})
         os.vrunv("make", {"install_sw"})
+        -- Remove static libraries, only keep shared
+        os.rm(path.join(packagedir, "lib", "*.a"))
     end)
 package_end()
 
 -- 4. sqlite (no deps)
 package("sqlite")
-    set_homepage("https://sqlite.org")
-    set_description("SQL database engine")
-    set_license("Public Domain")
     set_sourcedir(path.join(rootdir, "sqlite"))
     on_install(function (package)
-        local packagedir = package:installdir()
         import("package.tools.autoconf").install(package, {
-            "--prefix=" .. packagedir,
             "--enable-shared",
             "--disable-static",
         })
@@ -103,9 +90,6 @@ package_end()
 
 -- 5. apr (depends: libexpat)
 package("apr")
-    set_homepage("https://apr.apache.org")
-    set_description("Apache Portable Runtime")
-    set_license("Apache-2.0")
     set_sourcedir(path.join(rootdir, "apr"))
     add_deps("libexpat")
     if is_plat("windows") then
@@ -137,9 +121,6 @@ package_end()
 
 -- 6. apr-util (depends: apr, libexpat)
 package("apr-util")
-    set_homepage("https://apr.apache.org")
-    set_description("Apache Portable Runtime Utility")
-    set_license("Apache-2.0")
     set_sourcedir(path.join(rootdir, "apr-util"))
     add_deps("apr", "libexpat")
     on_install("linux", "macosx", function (package)
@@ -182,9 +163,6 @@ package_end()
 
 -- 7. serf (depends: apr, apr-util, openssl, zlib)
 package("serf")
-    set_homepage("https://serf.apache.org")
-    set_description("HTTP client library")
-    set_license("Apache-2.0")
     set_sourcedir(path.join(rootdir, "serf"))
     add_deps("apr", "apr-util", "openssl", "zlib")
     on_install(function (package)
@@ -243,7 +221,7 @@ package("serf")
         local linkflags = {}
         if package:is_plat("macosx") then
             libname = "libserf-1.dylib"
-            table.insert(linkflags, "-Wl,-install_name," .. path.join(libdir, libname))
+            table.insert(linkflags, "-Wl,-install_name,@rpath/" .. libname)
         elseif package:is_plat("linux") then
             libname = "libserf-1.so"
             table.insert(linkflags, "-Wl,-soname," .. libname)
@@ -273,9 +251,6 @@ package_end()
 
 -- 8. subversion (depends: all above)
 package("subversion")
-    set_homepage("https://subversion.apache.org")
-    set_description("Version control system")
-    set_license("Apache-2.0")
     set_sourcedir(path.join(rootdir, "subversion"))
     add_deps("sqlite", "openssl", "serf", "apr-util", "apr", "libexpat", "zlib")
     on_install(function (package)
@@ -311,77 +286,103 @@ target("subversion-build")
     -- Install: copy all built files to the install directory
     after_install(function (target)
         local installdir = path.join(os.scriptdir(), "build", "install")
-        local pkgdir = path.join(os.scriptdir(), "build", ".packages")
 
-        -- Copy all package outputs to the install directory
-        local pkg_names = {"zlib", "libexpat", "openssl", "sqlite", "apr", "apr-util", "serf", "subversion"}
-        for _, pkg_name in ipairs(pkg_names) do
-            local pkg_path = path.join(pkgdir, pkg_name:sub(1,1), pkg_name, "latest")
-            if os.isdir(pkg_path) then
-                -- Find the actual package directory (with hash)
-                for _, hash_dir in ipairs(os.dirs(path.join(pkg_path, "*"))) do
-                    -- Copy lib files
-                    if os.isdir(path.join(hash_dir, "lib")) then
-                        os.mkdir(path.join(installdir, "lib"))
-                        for _, libfile in ipairs(os.files(path.join(hash_dir, "lib", "*"))) do
-                            os.cp(libfile, path.join(installdir, "lib"))
-                        end
-                    end
-                    -- Copy include files
-                    if os.isdir(path.join(hash_dir, "include")) then
-                        os.mkdir(path.join(installdir, "include"))
-                        for _, incdir in ipairs(os.dirs(path.join(hash_dir, "include", "*"))) do
-                            local dirname = path.filename(incdir)
-                            os.mkdir(path.join(installdir, "include", dirname))
-                            for _, incfile in ipairs(os.files(path.join(incdir, "*"))) do
-                                os.cp(incfile, path.join(installdir, "include", dirname))
-                            end
-                        end
-                        -- Also copy direct include files
-                        for _, incfile in ipairs(os.files(path.join(hash_dir, "include", "*"))) do
-                            os.cp(incfile, path.join(installdir, "include"))
-                        end
-                    end
-                    -- Copy bin files
-                    if os.isdir(path.join(hash_dir, "bin")) then
-                        os.mkdir(path.join(installdir, "bin"))
-                        for _, binfile in ipairs(os.files(path.join(hash_dir, "bin", "*"))) do
-                            os.cp(binfile, path.join(installdir, "bin"))
-                        end
-                    end
+        -- Get all package install directories
+        local pkg_dirs = {}
+        for _, pkg_name in ipairs({"zlib", "libexpat", "openssl", "sqlite", "apr", "apr-util", "serf", "subversion"}) do
+            local pkg = target:pkg(pkg_name)
+            if pkg then
+                local dir = pkg:installdir()
+                if dir and os.isdir(dir) then
+                    table.insert(pkg_dirs, dir)
                 end
             end
         end
 
-        -- Fix rpath for macOS binaries
+        -- Copy files from all package directories
+        for _, pkg_dir in ipairs(pkg_dirs) do
+            -- Copy lib files
+            if os.isdir(path.join(pkg_dir, "lib")) then
+                os.mkdir(path.join(installdir, "lib"))
+                for _, f in ipairs(os.files(path.join(pkg_dir, "lib", "*"))) do
+                    os.cp(f, path.join(installdir, "lib"))
+                end
+            end
+            -- Copy include files
+            if os.isdir(path.join(pkg_dir, "include")) then
+                os.mkdir(path.join(installdir, "include"))
+                for _, d in ipairs(os.dirs(path.join(pkg_dir, "include", "*"))) do
+                    local dirname = path.filename(d)
+                    os.mkdir(path.join(installdir, "include", dirname))
+                    for _, f in ipairs(os.files(path.join(d, "*"))) do
+                        os.cp(f, path.join(installdir, "include", dirname))
+                    end
+                end
+                for _, f in ipairs(os.files(path.join(pkg_dir, "include", "*"))) do
+                    os.cp(f, path.join(installdir, "include"))
+                end
+            end
+            -- Copy bin files
+            if os.isdir(path.join(pkg_dir, "bin")) then
+                os.mkdir(path.join(installdir, "bin"))
+                for _, f in ipairs(os.files(path.join(pkg_dir, "bin", "*"))) do
+                    os.cp(f, path.join(installdir, "bin"))
+                end
+            end
+        end
+
+        -- Fix rpath for macOS
         if os.host() == "macosx" then
             local bindir = path.join(installdir, "bin")
             local libdir = path.join(installdir, "lib")
 
-            -- Fix library install names
+            -- Step 1: Fix library install names to use @rpath
             for _, libfile in ipairs(os.files(path.join(libdir, "*.dylib"))) do
                 local libname = path.filename(libfile)
-                os.vrunv("install_name_tool", {"-id", path.join(libdir, libname), libfile}, {try = true})
+                os.vrunv("install_name_tool", {"-id", "@rpath/" .. libname, libfile}, {try = true})
             end
 
-            -- Fix rpath for subversion binaries
-            for _, binfile in ipairs(os.files(path.join(bindir, "svn*"))) do
-                os.vrunv("install_name_tool", {"-add_rpath", libdir, binfile}, {try = true})
-            end
-
-            -- Fix library references in all installed dylibs
+            -- Step 2: Fix all absolute path references in dylibs to use @rpath
             for _, libfile in ipairs(os.files(path.join(libdir, "*.dylib"))) do
-                local libname = path.filename(libfile)
-                -- Get current dependencies
                 local otool_out = os.iorunv("otool", {"-L", libfile})
                 if otool_out then
                     for line in otool_out:gmatch("[^\n]+") do
-                        -- Find absolute paths to our packages directory
                         local old_path = line:match("%s+(/Users/.-%.dylib)")
-                        if old_path and old_path:match("build/.packages") then
+                        if old_path then
                             local dep_name = path.filename(old_path)
-                            local new_path = path.join(libdir, dep_name)
-                            os.vrunv("install_name_tool", {"-change", old_path, new_path, libfile}, {try = true})
+                            os.vrunv("install_name_tool", {"-change", old_path, "@rpath/" .. dep_name, libfile}, {try = true})
+                        end
+                    end
+                end
+            end
+
+            -- Step 3: Fix all binaries - add rpath and fix dependencies
+            for _, binfile in ipairs(os.files(path.join(bindir, "*"))) do
+                local fname = path.filename(binfile)
+                -- Skip scripts and config files
+                if fname ~= "c_rehash" and not fname:match("-config$") then
+                    local f = io.open(binfile, "rb")
+                    if f then
+                        local magic = f:read(4)
+                        f:close()
+                        if magic and magic:len() >= 4 then
+                            local b1, b2 = magic:byte(1), magic:byte(2)
+                            -- Check for Mach-O magic bytes
+                            if (b1 == 0xCF and b2 == 0xFA) or (b1 == 0xCE and b2 == 0xFA) or (b1 == 0xCA and b2 == 0xFE) then
+                                -- Add rpath
+                                os.vrunv("install_name_tool", {"-add_rpath", "@executable_path/../lib", binfile}, {try = true})
+                                -- Fix absolute path references
+                                local otool_out = os.iorunv("otool", {"-L", binfile})
+                                if otool_out then
+                                    for line in otool_out:gmatch("[^\n]+") do
+                                        local old_path = line:match("%s+(/Users/.-%.dylib)")
+                                        if old_path then
+                                            local dep_name = path.filename(old_path)
+                                            os.vrunv("install_name_tool", {"-change", old_path, "@rpath/" .. dep_name, binfile}, {try = true})
+                                        end
+                                    end
+                                end
+                            end
                         end
                     end
                 end
