@@ -3,6 +3,9 @@ set_xmakever("2.8.0")
 
 add_rules("mode.debug", "mode.release")
 
+-- Force all packages to build from source, not use system packages
+add_requireconfs("*", {system = false})
+
 local rootdir = os.scriptdir()
 
 -- Shared install prefix for all dependencies
@@ -287,25 +290,31 @@ target("subversion-build")
     after_install(function (target)
         local installdir = path.join(os.scriptdir(), "build", "install")
 
-        -- Get all package install directories
+        -- Get all package install directories from cache
         local pkg_dirs = {}
-        for _, pkg_name in ipairs({"zlib", "libexpat", "openssl", "sqlite", "apr", "apr-util", "serf", "subversion"}) do
-            local pkg = target:pkg(pkg_name)
-            if pkg then
-                local dir = pkg:installdir()
-                if dir and os.isdir(dir) then
-                    table.insert(pkg_dirs, dir)
+        local pkg_cache = path.join(os.scriptdir(), "build", ".packages")
+        if os.isdir(pkg_cache) then
+            for _, letter_dir in ipairs(os.dirs(path.join(pkg_cache, "*"))) do
+                for _, name_dir in ipairs(os.dirs(path.join(letter_dir, "*"))) do
+                    for _, hash_dir in ipairs(os.dirs(path.join(name_dir, "latest", "*"))) do
+                        if hash_dir ~= "cache" and os.isdir(path.join(hash_dir, "lib")) then
+                            table.insert(pkg_dirs, hash_dir)
+                        end
+                    end
                 end
             end
         end
 
         -- Copy files from all package directories
         for _, pkg_dir in ipairs(pkg_dirs) do
-            -- Copy lib files
+            -- Copy lib files (only dynamic libraries, skip static)
             if os.isdir(path.join(pkg_dir, "lib")) then
                 os.mkdir(path.join(installdir, "lib"))
                 for _, f in ipairs(os.files(path.join(pkg_dir, "lib", "*"))) do
-                    os.cp(f, path.join(installdir, "lib"))
+                    -- Skip static libraries
+                    if not f:match("%.a$") then
+                        os.cp(f, path.join(installdir, "lib"))
+                    end
                 end
             end
             -- Copy include files
