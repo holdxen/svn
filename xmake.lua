@@ -52,18 +52,13 @@ package("openssl")
             "--with-zlib-include=" .. path.join(zlib_dir, "include"),
             "--with-zlib-lib=" .. path.join(zlib_dir, "lib"),
         }
-	print("config", configs)
-	print("plat", package:plat())
-	print("arch", package:arch())
         if package:is_debug() then table.insert(configs, "-g") end
         if package:is_plat("macosx") then
             table.insert(configs, 1, package:is_arch("x86_64") and "darwin64-x86_64-cc" or "darwin64-arm64-cc")
         elseif package:is_plat("linux") then
             if package:is_arch("x86_64") then
-		  print("x86_64")
                 table.insert(configs, 1, "linux-x86_64")
             elseif package:is_arch("x86") then
-		  print("x86_64")
                 table.insert(configs, 1, "linux-elf")
             elseif package:arch() == "arm64-v8a" or package:arch() == "aarch64" then
                 table.insert(configs, 1, "linux-aarch64")
@@ -110,10 +105,13 @@ target_end()
 -- 5. apr
 package("apr")
     set_sourcedir(path.join(rootdir, "apr"))
+    set_kind("shared")
     add_deps("libexpat")
-    if is_plat("windows") then
-        add_syslinks("wsock32", "ws2_32", "advapi32", "shell32", "rpcrt4")
-    end
+    on_load(function (package)
+        if package:is_plat("windows") then
+            package:add("syslinks", "wsock32", "ws2_32", "advapi32", "shell32", "rpcrt4")
+        end
+    end)
     on_install("linux", "macosx", function (package)
         local configs = {}
         if package:is_plat("linux") then
@@ -124,10 +122,8 @@ package("apr")
             os.vrunv("sh", {"./buildconf"})
             table.insert(configs, "CFLAGS=-DAPR_IOVEC_DEFINED")
         end
-        table.insert(configs, "--enable-shared=yes")
-        table.insert(configs, "--enable-static=no")
         import("package.tools.autoconf").install(package, configs)
-        os.rm(package:installdir("lib/*.a"))
+        os.rm(path.join(package:installdir(), "lib", "*.a"))
     end)
     on_install("windows", function (package)
         import("package.tools.cmake").install(package, {
@@ -140,22 +136,22 @@ package_end()
 -- 5.5 apr-iconv (optional, for character encoding conversion)
 package("apr-iconv")
     set_sourcedir(path.join(rootdir, "apr-iconv"))
+    set_kind("shared")
     add_deps("apr")
     on_install("linux", "macosx", function (package)
         local apr_dir = package:dep("apr"):installdir()
         os.vrunv("sh", {"./buildconf"})
         import("package.tools.autoconf").install(package, {
             "--with-apr=" .. apr_dir,
-            "--enable-shared=yes",
-            "--enable-static=no",
         })
-        os.rm(package:installdir("lib/*.a"))
+        os.rm(path.join(package:installdir(), "lib", "*.a"))
     end)
 package_end()
 
 -- 6. apr-util
 package("apr-util")
     set_sourcedir(path.join(rootdir, "apr-util"))
+    set_kind("shared")
     add_deps("apr", "libexpat", "apr-iconv")
     on_install("linux", "macosx", function (package)
         local apr_src = path.join(rootdir, "apr")
@@ -177,10 +173,8 @@ package("apr-util")
             "--without-ldap",
             "--without-odbc",
             "--without-crypto",
-            "--enable-shared=yes",
-            "--enable-static=no",
         })
-        os.rm(package:installdir("lib/*.a"))
+        os.rm(path.join(package:installdir(), "lib", "*.a"))
     end)
     on_install("windows", function (package)
         import("package.tools.cmake").install(package, {
