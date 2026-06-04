@@ -347,38 +347,20 @@ target("subversion-install")
             -- Copy lib files using cp -a to preserve symlinks
             if os.isdir(path.join(pkg_dir, "lib")) then
                 os.mkdir(path.join(installdir, "lib"))
-                -- Copy each file/symlink individually
-                for _, f in ipairs(os.files(path.join(pkg_dir, "lib", "*"))) do
-                    local fname = path.filename(f)
-                    -- Skip static libraries
-                    if not fname:match("%.a$") and not fname:match("%.la$") then
-                        local dest = path.join(installdir, "lib", fname)
-                        -- Remove existing file/link first
-                        os.tryrm(dest)
-                        -- Check if source is a symlink
-                        if os.islink(f) then
-                            local linktarget = os.readlink(f)
-                            os.ln(linktarget, dest)
-                        else
-                            os.cp(f, dest)
-                        end
-                    end
-                end
+                -- cp -a preserves symlinks and file attributes
+                os.vrunv("cp", {"-a", "-n",
+                    path.join(pkg_dir, "lib", "."),
+                    path.join(installdir, "lib")})
+                -- Remove static libraries after copy
+                os.rm(path.join(installdir, "lib", "*.a"))
+                os.rm(path.join(installdir, "lib", "*.la"))
             end
             -- Copy bin files
             if os.isdir(path.join(pkg_dir, "bin")) then
                 os.mkdir(path.join(installdir, "bin"))
-                for _, f in ipairs(os.files(path.join(pkg_dir, "bin", "*"))) do
-                    local fname = path.filename(f)
-                    local dest = path.join(installdir, "bin", fname)
-                    os.tryrm(dest)
-                    if os.islink(f) then
-                        local linktarget = os.readlink(f)
-                        os.ln(linktarget, dest)
-                    else
-                        os.cp(f, dest)
-                    end
-                end
+                os.vrunv("cp", {"-a", "-n",
+                    path.join(pkg_dir, "bin", "."),
+                    path.join(installdir, "bin")})
             end
             -- Copy include files
             if os.isdir(path.join(pkg_dir, "include")) then
@@ -401,21 +383,31 @@ target("subversion-install")
             local bindir = path.join(installdir, "bin")
             local libdir = path.join(installdir, "lib")
 
-            -- Fix library install names
+            -- Fix library install names (deduplicate symlinks)
+            local seen_dylib = {}
             for _, libfile in ipairs(os.files(path.join(libdir, "*.dylib"))) do
-                local libname = path.filename(libfile)
-                os.vrunv("install_name_tool", {"-id", "@rpath/" .. libname, libfile}, {try = true})
+                local real = os.realpath(libfile)
+                if real and not seen_dylib[real] then
+                    seen_dylib[real] = true
+                    local libname = path.filename(libfile)
+                    os.vrunv("install_name_tool", {"-id", "@rpath/" .. libname, libfile}, {try = true})
+                end
             end
 
-            -- Fix absolute path references in dylibs
+            -- Fix absolute path references in dylibs (deduplicate symlinks)
+            seen_dylib = {}
             for _, libfile in ipairs(os.files(path.join(libdir, "*.dylib"))) do
-                local otool_out = os.iorunv("otool", {"-L", libfile})
-                if otool_out then
-                    for line in otool_out:gmatch("[^\n]+") do
-                        local old_path = line:match("%s+(/Users/.-%.dylib)")
-                        if old_path then
-                            local dep_name = path.filename(old_path)
-                            os.vrunv("install_name_tool", {"-change", old_path, "@rpath/" .. dep_name, libfile}, {try = true})
+                local real = os.realpath(libfile)
+                if real and not seen_dylib[real] then
+                    seen_dylib[real] = true
+                    local otool_out = os.iorunv("otool", {"-L", libfile})
+                    if otool_out then
+                        for line in otool_out:gmatch("[^\n]+") do
+                            local old_path = line:match("%s+(/Users/.-%.dylib)")
+                            if old_path then
+                                local dep_name = path.filename(old_path)
+                                os.vrunv("install_name_tool", {"-change", old_path, "@rpath/" .. dep_name, libfile}, {try = true})
+                            end
                         end
                     end
                 end
@@ -468,9 +460,16 @@ target("subversion-install")
                 end
             end
 
+            -- Deduplicate: os.files() follows symlinks, so the same actual
+            -- file may appear multiple times through different symlink names.
+            local seen = {}
             for _, libfile in ipairs(os.files(path.join(libdir, "*.so*"))) do
-                os.vrunv("patchelf", {"--set-rpath", "$ORIGIN", libfile}, {try = true})
-                fix_needed(libfile)
+                local real = os.realpath(libfile)
+                if real and not seen[real] then
+                    seen[real] = true
+                    os.vrunv("patchelf", {"--set-rpath", "$ORIGIN", libfile}, {try = true})
+                    fix_needed(libfile)
+                end
             end
 
             for _, binfile in ipairs(os.files(path.join(bindir, "*"))) do
