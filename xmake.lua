@@ -105,7 +105,6 @@ target_end()
 -- 5. apr
 package("apr")
     set_sourcedir(path.join(rootdir, "apr"))
-    set_kind("shared")
     add_deps("libexpat")
     on_load(function (package)
         if package:is_plat("windows") then
@@ -113,16 +112,22 @@ package("apr")
         end
     end)
     on_install("linux", "macosx", function (package)
-        local configs = {}
+        local configs = {
+            "--prefix=" .. package:installdir(),
+            "--enable-shared",
+            "--enable-static=no",
+        }
         if package:is_plat("linux") then
             os.vrunv("sh", {"./buildconf"})
             io.replace("configure", "RM='$RM'", "RM='$RM -f'")
         else
             io.replace("configure.in", "pid_t_fmt='#error Can not determine the proper size for pid_t'", "pid_t_fmt='#define APR_PID_T_FMT \"d\"'")
             os.vrunv("sh", {"./buildconf"})
-            table.insert(configs, "CFLAGS=-DAPR_IOVEC_DEFINED")
+            table.insert(configs, 1, "CFLAGS=-DAPR_IOVEC_DEFINED")
         end
-        import("package.tools.autoconf").install(package, configs)
+        os.vrunv("sh", table.join({"./configure"}, configs))
+        os.vrunv("make", {"-j", tostring(os.default_njob())})
+        os.vrunv("make", {"install"})
         os.rm(path.join(package:installdir(), "lib", "*.a"))
     end)
     on_install("windows", function (package)
@@ -136,14 +141,18 @@ package_end()
 -- 5.5 apr-iconv (optional, for character encoding conversion)
 package("apr-iconv")
     set_sourcedir(path.join(rootdir, "apr-iconv"))
-    set_kind("shared")
     add_deps("apr")
     on_install("linux", "macosx", function (package)
         local apr_dir = package:dep("apr"):installdir()
         os.vrunv("sh", {"./buildconf"})
-        import("package.tools.autoconf").install(package, {
+        os.vrunv("sh", {"./configure",
+            "--prefix=" .. package:installdir(),
             "--with-apr=" .. apr_dir,
+            "--enable-shared",
+            "--enable-static=no",
         })
+        os.vrunv("make", {"-j", tostring(os.default_njob())})
+        os.vrunv("make", {"install"})
         os.rm(path.join(package:installdir(), "lib", "*.a"))
     end)
 package_end()
@@ -151,7 +160,6 @@ package_end()
 -- 6. apr-util
 package("apr-util")
     set_sourcedir(path.join(rootdir, "apr-util"))
-    set_kind("shared")
     add_deps("apr", "libexpat", "apr-iconv")
     on_install("linux", "macosx", function (package)
         local apr_src = path.join(rootdir, "apr")
@@ -162,7 +170,8 @@ package("apr-util")
         -- Run buildconf with source paths
         os.vrunv("sh", {"./buildconf", "--with-apr=" .. apr_src})
 
-        import("package.tools.autoconf").install(package, {
+        os.vrunv("sh", {"./configure",
+            "--prefix=" .. package:installdir(),
             "--with-apr=" .. apr_dir,
             "--with-apr-iconv=../apr-iconv",
             "--with-expat=" .. expat_dir,
@@ -173,7 +182,11 @@ package("apr-util")
             "--without-ldap",
             "--without-odbc",
             "--without-crypto",
+            "--enable-shared",
+            "--enable-static=no",
         })
+        os.vrunv("make", {"-j", tostring(os.default_njob())})
+        os.vrunv("make", {"install"})
         os.rm(path.join(package:installdir(), "lib", "*.a"))
     end)
     on_install("windows", function (package)
