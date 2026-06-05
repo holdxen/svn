@@ -56,11 +56,23 @@ package("openssl")
         local zlib_dir = package:dep("zlib"):installdir()
         -- Clean stale build artifacts from previous builds in the source tree,
         -- otherwise old object files get linked alongside new ones causing errors
-        if package:is_plat("windows") then
-            os.vrunv("nmake", {"clean"}, {try = true})
-        else
-            os.vrunv("make", {"clean"}, {try = true})
-        end
+        try
+        {
+            function ()
+                if package:is_plat("windows") then
+                    os.vrunv("nmake", {"clean"}, {try = true})
+                else
+                    os.vrunv("make", {"clean"}, {try = true})
+                end
+            end,
+            catch
+            {
+                function (errors)
+                    print("warning: failed to clean")
+                    print(errors)
+                end
+            }
+        }
         -- On Windows, OpenSSL's Configure expects the full path to the .lib file
         -- for --with-zlib-lib (not a directory like on Unix with -L prefix)
         local zlib_lib_path
@@ -173,6 +185,23 @@ target("sqlite3")
         os.mkdir(incdir)
         os.cp(path.join(g_sqlite_headers_dir, "sqlite3.h"), incdir)
         os.cp(path.join(g_sqlite_headers_dir, "sqlite3ext.h"), incdir)
+
+        local pcdir = path.join(installdir, "lib", "pkgconfig")
+        os.mkdir(pcdir)
+        local pc_content = [[
+prefix=${pcfiledir}/../..
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
+
+Name: sqlite3
+Description: SQLite database engine
+Version: 3.53.2
+Libs: -L${libdir} -lsqlite3
+Libs.private: -lpthread -ldl -lm
+Cflags: -I${includedir}
+]]
+        io.writefile(path.join(pcdir, "sqlite3.pc"), pc_content)
     end)
 target_end()
 
