@@ -45,6 +45,9 @@ package("openssl")
     on_install(function (package)
         local packagedir = package:installdir()
         local zlib_dir = package:dep("zlib"):installdir()
+        -- Clean stale object files from previous builds in the source tree,
+        -- otherwise old .o files get linked alongside new ones causing duplicate symbols
+        os.vrunv("make", {"clean"}, {try = true})
         local configs = {
             "shared", "zlib",
             "--prefix=" .. packagedir,
