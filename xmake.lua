@@ -119,6 +119,7 @@ package("apr")
             "--prefix=" .. package:installdir(),
             "--enable-shared",
             "--enable-static=no",
+            "--enable-nonportable-atomics",
         }
         -- Clean stale build files from previous runs
         if os.isfile("Makefile") then
@@ -172,12 +173,13 @@ package_end()
 -- 6. apr-util
 package("apr-util")
     set_sourcedir(path.join(rootdir, "apr-util"))
-    add_deps("apr", "libexpat", "apr-iconv")
+    add_deps("apr", "libexpat", "apr-iconv", "openssl")
     on_install("linux", "macosx", function (package)
         local apr_src = path.join(rootdir, "apr")
         local apr_dir = package:dep("apr"):installdir()
         local apr_iconv_dir = package:dep("apr-iconv"):installdir()
         local expat_dir = package:dep("libexpat"):installdir()
+        local openssl_dir = package:dep("openssl"):installdir()
 
         -- Clean stale build files from previous runs
         if os.isfile("Makefile") then
@@ -202,7 +204,8 @@ package("apr-util")
             "--without-pgsql",
             "--without-ldap",
             "--without-odbc",
-            "--without-crypto",
+            "--with-openssl=" .. openssl_dir,
+            "--with-crypto",
             "--enable-shared",
             "--enable-static=no",
         })
