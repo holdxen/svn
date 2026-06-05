@@ -98,14 +98,15 @@ package_end()
 target("sqlite3")
     set_kind("shared")
     set_targetdir(path.join(rootdir, "build", "install", "lib"))
-    add_files(path.join(rootdir, "sqlite", "sqlite3.c"))
-    add_includedirs(path.join(rootdir, "sqlite"))
-    add_headerfiles(path.join(rootdir, "sqlite", "sqlite3.h"))
-    add_headerfiles(path.join(rootdir, "sqlite", "sqlite3ext.h"))
+    add_files("sqlite/sqlite3.c")
+    add_includedirs("sqlite")
+    add_headerfiles("sqlite/sqlite3.h")
+    add_headerfiles("sqlite/sqlite3ext.h")
     if is_plat("linux") then
         add_syslinks("pthread", "dl", "m")
     elseif is_plat("windows") then
         add_defines("SQLITE_API=__declspec(dllexport)")
+        add_cxflags("/MD")
     end
     after_build(function (target)
         -- Copy headers to install directory
@@ -321,6 +322,9 @@ target("serf")
         add_syslinks("pthread")
     elseif is_plat("windows") then
         add_syslinks("ws2_32", "crypt32", "rpcrt4", "advapi32", "user32", "gdi32")
+        -- Link CRT for DLL entry point (DllMainCRTStartup)
+        add_cxflags("/MD")
+        add_ldflags("/MD")
     end
 
     -- Output to install directory
