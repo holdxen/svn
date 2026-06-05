@@ -106,7 +106,10 @@ target("sqlite3")
         add_syslinks("pthread", "dl", "m")
     elseif is_plat("windows") then
         add_defines("SQLITE_API=__declspec(dllexport)")
+        -- /MD是编译器选项，指定多线程DLL运行时库
         add_cxflags("/MD")
+        -- 链接CRT库，提供_DllMainCRTStartup入口点
+        add_syslinks("msvcrt")
     end
     after_build(function (target)
         -- Copy headers to install directory
@@ -322,9 +325,10 @@ target("serf")
         add_syslinks("pthread")
     elseif is_plat("windows") then
         add_syslinks("ws2_32", "crypt32", "rpcrt4", "advapi32", "user32", "gdi32")
-        -- Link CRT for DLL entry point (DllMainCRTStartup)
+        -- /MD是编译器选项，指定多线程DLL运行时库
         add_cxflags("/MD")
-        add_ldflags("/MD")
+        -- 链接CRT库，提供_DllMainCRTStartup入口点
+        add_syslinks("msvcrt")
     end
 
     -- Output to install directory
