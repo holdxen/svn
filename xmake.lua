@@ -356,6 +356,8 @@ package("subversion")
             "-DSVN_ENABLE_APACHE_MODULES=OFF",
             "-DSVN_BUILD_SHARED_FS=ON",
             "-DSVN_ENABLE_AUTH_KEYCHAIN=" .. (package:is_plat("macosx") and "ON" or "OFF"),
+            "-DSVN_ENABLE_AUTH_GNOME_KEYRING=" .. (package:is_plat("linux") and "ON" or "OFF"),
+            "-DSVN_ENABLE_AUTH_KWALLET=" .. (package:is_plat("linux") and "ON" or "OFF"),
         })
     end)
 package_end()
