@@ -8,6 +8,15 @@ add_requireconfs("*", {system = false})
 
 local rootdir = os.scriptdir()
 
+-- sqlite backend: "amalgamation" (pre-built sqlite3.c) or "source" (from src/*.c)
+-- On Windows, amalgamation is always used (source requires tclsh for generated files)
+option("sqlite_backend")
+    set_default("auto")
+    set_showmenu(true)
+    set_description("sqlite backend: auto | amalgamation | source")
+    set_values("auto", "amalgamation", "source")
+option_end()
+
 -- ============================================================
 -- Package definitions
 -- ============================================================
@@ -94,30 +103,76 @@ package("openssl")
     end)
 package_end()
 
--- 4. sqlite (single file: sqlite3.c)
+-- 4. sqlite backend
+-- Use --sqlite_backend=amalgamation|source to choose (default: auto).
+-- On Windows, amalgamation is always used (source build requires tclsh).
+-- g_sqlite_headers_dir is set in on_load and used in after_build.
+local g_sqlite_headers_dir = nil
+
 target("sqlite3")
     set_kind("shared")
     set_targetdir(path.join(rootdir, "build", "install", "lib"))
-    add_files("sqlite/sqlite3.c")
-    add_includedirs("sqlite")
-    add_headerfiles("sqlite/sqlite3.h")
-    add_headerfiles("sqlite/sqlite3ext.h")
     if is_plat("linux") then
         add_syslinks("pthread", "dl", "m")
     elseif is_plat("windows") then
         add_defines("SQLITE_API=__declspec(dllexport)")
-        -- /MD是编译器选项，指定多线程DLL运行时库
         add_cxflags("/MD")
-        -- 链接CRT库，提供_DllMainCRTStartup入口点
         add_syslinks("msvcrt")
     end
+    on_load(function (target)
+        local backend = get_config("sqlite_backend") or "auto"
+        -- Windows always uses amalgamation (source build needs tclsh for generated files)
+        if is_plat("windows") and backend ~= "amalgamation" then
+            backend = "amalgamation"
+            if get_config("sqlite_backend") == "source" then
+                print("warning: --sqlite_backend=source is not supported on Windows, using amalgamation.")
+            end
+        end
+
+        local amalgamation_dir = nil
+        for _, d in ipairs(os.dirs(path.join(os.scriptdir(), "sqlite-amalgamation-*"))) do
+            amalgamation_dir = d
+            break
+        end
+
+        if backend == "amalgamation" or (backend == "auto" and amalgamation_dir) then
+            if not amalgamation_dir then
+                raise("Amalgamation directory not found (sqlite-amalgamation-*/).\n"
+                    .. "Download from https://sqlite.org/download.html and extract to project root.")
+            end
+            if not os.isfile(path.join(amalgamation_dir, "sqlite3.c")) then
+                raise("sqlite3.c not found in " .. amalgamation_dir)
+            end
+            target:add("files", path.join(amalgamation_dir, "sqlite3.c"))
+            target:add("includedirs", amalgamation_dir)
+            g_sqlite_headers_dir = amalgamation_dir
+            print("sqlite3: using amalgamation backend (" .. path.filename(amalgamation_dir) .. ")")
+        else
+            -- Source backend (requires generated files: parse.c, opcodes.c, etc.)
+            local sqlite_src = path.join(os.scriptdir(), "sqlite", "src")
+            if not os.isdir(sqlite_src) then
+                raise("sqlite source directory not found at sqlite/src/")
+            end
+            target:add("files", path.join(sqlite_src, "*.c"))
+            target:add("files", path.join(os.scriptdir(), "sqlite", "src", "test_demovfs.c"))
+            for _, f in ipairs(os.files(path.join(sqlite_src, "test*.c"))) do
+                target:remove("files", f)
+            end
+            target:remove("files", path.join(sqlite_src, "tclsqlite.c"))
+            target:add("includedirs", sqlite_src)
+            target:add("includedirs", path.join(os.scriptdir(), "sqlite"))
+            target:add("defines", "SQLITE_CORE")
+            g_sqlite_headers_dir = path.join(os.scriptdir(), "sqlite")
+            print("sqlite3: using source backend")
+        end
+    end)
     after_build(function (target)
-        -- Copy headers to install directory
+        if not g_sqlite_headers_dir then return end
         local installdir = path.join(os.scriptdir(), "build", "install")
         local incdir = path.join(installdir, "include")
         os.mkdir(incdir)
-        os.cp(path.join(os.scriptdir(), "sqlite", "sqlite3.h"), incdir)
-        os.cp(path.join(os.scriptdir(), "sqlite", "sqlite3ext.h"), incdir)
+        os.cp(path.join(g_sqlite_headers_dir, "sqlite3.h"), incdir)
+        os.cp(path.join(g_sqlite_headers_dir, "sqlite3ext.h"), incdir)
     end)
 target_end()
 
