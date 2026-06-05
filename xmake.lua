@@ -147,9 +147,15 @@ package("apr")
 package_end()
 
 -- 5.5 apr-iconv (optional, for character encoding conversion)
+-- Note: Only needed on Linux/macOS. On Windows, subversion uses its own
+-- Win32 API-based character encoding (svn_subr__win32_xlate) and does not
+-- depend on apr_xlate / apr-iconv at all.
 package("apr-iconv")
     set_sourcedir(path.join(rootdir, "apr-iconv"))
     add_deps("apr")
+    on_install("windows", function (package)
+        -- No-op: apr-iconv has no CMake/MSVC build system and is not needed on Windows
+    end)
     on_install("linux", "macosx", function (package)
         local apr_dir = package:dep("apr"):installdir()
         -- Clean stale build files (apr-util's configure re-runs apr-iconv's
@@ -173,7 +179,14 @@ package_end()
 -- 6. apr-util
 package("apr-util")
     set_sourcedir(path.join(rootdir, "apr-util"))
-    add_deps("apr", "libexpat", "apr-iconv", "openssl")
+    add_deps("apr", "libexpat", "openssl")
+    on_load(function (package)
+        -- apr-iconv only needed on Linux/macOS for character encoding;
+        -- on Windows, subversion uses Win32 API directly (no apr_xlate needed)
+        if not package:is_plat("windows") then
+            package:add("deps", "apr-iconv")
+        end
+    end)
     on_install("linux", "macosx", function (package)
         local apr_src = path.join(rootdir, "apr")
         local apr_dir = package:dep("apr"):installdir()
