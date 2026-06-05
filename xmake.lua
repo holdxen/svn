@@ -343,6 +343,9 @@ package("subversion")
     set_sourcedir(path.join(rootdir, "subversion"))
     add_deps("openssl", "apr-util", "apr", "libexpat", "zlib")
     on_install(function (package)
+
+        os.vrunv("git", {"restore", "."}, {curdir = path.join(os.scriptdir(), "subversion")})
+
         local python = package:is_plat("windows") and "python" or "python3"
         os.vrunv(python, {"gen-make.py", "-t", "cmake"})
 
