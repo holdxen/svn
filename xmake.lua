@@ -117,6 +117,10 @@ package("apr")
             "--enable-shared",
             "--enable-static=no",
         }
+        -- Clean stale build files from previous runs
+        if os.isfile("Makefile") then
+            os.vrunv("make", {"distclean"}, {try = true})
+        end
         if package:is_plat("linux") then
             os.vrunv("sh", {"./buildconf"})
             io.replace("configure", "RM='$RM'", "RM='$RM -f'")
@@ -144,6 +148,11 @@ package("apr-iconv")
     add_deps("apr")
     on_install("linux", "macosx", function (package)
         local apr_dir = package:dep("apr"):installdir()
+        -- Clean stale build files (apr-util's configure re-runs apr-iconv's
+        -- configure with wrong --prefix, corrupting the Makefiles and .la file)
+        if os.isfile("Makefile") then
+            os.vrunv("make", {"distclean"}, {try = true})
+        end
         os.vrunv("sh", {"./buildconf"})
         os.vrunv("sh", {"./configure",
             "--prefix=" .. package:installdir(),
@@ -167,13 +176,22 @@ package("apr-util")
         local apr_iconv_dir = package:dep("apr-iconv"):installdir()
         local expat_dir = package:dep("libexpat"):installdir()
 
+        -- Clean stale build files from previous runs
+        if os.isfile("Makefile") then
+            os.vrunv("make", {"distclean"}, {try = true})
+        end
+
         -- Run buildconf with source paths
         os.vrunv("sh", {"./buildconf", "--with-apr=" .. apr_src})
 
+        -- NOTE: Do NOT pass --with-apr-iconv=../apr-iconv here!
+        -- apr-util's configure re-runs apr-iconv's configure as a sub-package
+        -- with --prefix set to apr-util's prefix, which corrupts apr-iconv's
+        -- Makefiles and .la file. Use --with-iconv instead to link against
+        -- the already-installed apr-iconv.
         os.vrunv("sh", {"./configure",
             "--prefix=" .. package:installdir(),
             "--with-apr=" .. apr_dir,
-            "--with-apr-iconv=../apr-iconv",
             "--with-expat=" .. expat_dir,
             "--without-libxml2",
             "--with-iconv=" .. apr_iconv_dir,
@@ -293,6 +311,10 @@ target("serf")
                         target:add("includedirs", path.join(dir, "include", "apr-1"), {public = true})
                     end
                     target:add("linkdirs", path.join(dir, "lib"), {public = true})
+                    -- Embed rpath for OpenSSL so libserf-1.so can find libssl/libcrypto at runtime
+                    if name == "openssl" then
+                        target:add("rpathdirs", path.join(dir, "lib"), {public = true})
+                    end
                 end
             end
         end
@@ -300,13 +322,38 @@ target("serf")
         target:add("links", "ssl", "crypto", "z", "apr-1", "aprutil-1")
     end)
 
-    -- After build, copy headers to install directory
+    -- After build, copy headers and generate pkg-config file
     after_build(function (target)
-        local incdir = path.join(os.scriptdir(), "build", "install", "include", "serf-1")
+        import("core.project.project")
+        local installdir = path.join(os.scriptdir(), "build", "install")
+        local incdir = path.join(installdir, "include", "serf-1")
         os.mkdir(incdir)
         os.cp(path.join(os.scriptdir(), "serf", "serf.h"), incdir)
         os.cp(path.join(os.scriptdir(), "serf", "serf_bucket_types.h"), incdir)
         os.cp(path.join(os.scriptdir(), "serf", "serf_bucket_util.h"), incdir)
+
+        -- Generate serf-1.pc for pkg-config (needed by subversion's CMake build)
+        -- Collect OpenSSL library path for the Libs field
+        local openssl_libdir = ""
+        local openssl_pkg = project.required_package("openssl")
+        if openssl_pkg then
+            openssl_libdir = path.join(openssl_pkg:installdir(), "lib")
+        end
+        local pcdir = path.join(installdir, "lib", "pkgconfig")
+        os.mkdir(pcdir)
+        local pc_content = string.format([[
+prefix=${pcfiledir}/../..
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include/serf-1
+
+Name: serf
+Description: Serf - a high performance HTTP client library
+Version: 1.3.10
+Libs: -L${libdir} -lserf-1 -L%s -lssl -lcrypto
+Cflags: -I${includedir}
+]], openssl_libdir)
+        io.writefile(path.join(pcdir, "serf-1.pc"), pc_content)
     end)
 target_end()
 
@@ -379,6 +426,16 @@ target("subversion-install")
         end
 
         -- Fix dynamic library paths for distribution
+
+        -- Helper to resolve symlinks (os.realpath not available in xmake v3)
+        local function resolve_path(filepath)
+            local out = os.iorunv("readlink", {"-f", filepath}, {try = true})
+            if out then
+                return out:match("^%s*(.-)%s*$")
+            end
+            return filepath
+        end
+
         if os.host() == "macosx" then
             local bindir = path.join(installdir, "bin")
             local libdir = path.join(installdir, "lib")
@@ -386,7 +443,7 @@ target("subversion-install")
             -- Fix library install names (deduplicate symlinks)
             local seen_dylib = {}
             for _, libfile in ipairs(os.files(path.join(libdir, "*.dylib"))) do
-                local real = os.realpath(libfile)
+                local real = resolve_path(libfile)
                 if real and not seen_dylib[real] then
                     seen_dylib[real] = true
                     local libname = path.filename(libfile)
@@ -397,7 +454,7 @@ target("subversion-install")
             -- Fix absolute path references in dylibs (deduplicate symlinks)
             seen_dylib = {}
             for _, libfile in ipairs(os.files(path.join(libdir, "*.dylib"))) do
-                local real = os.realpath(libfile)
+                local real = resolve_path(libfile)
                 if real and not seen_dylib[real] then
                     seen_dylib[real] = true
                     local otool_out = os.iorunv("otool", {"-L", libfile})
@@ -464,7 +521,7 @@ target("subversion-install")
             -- file may appear multiple times through different symlink names.
             local seen = {}
             for _, libfile in ipairs(os.files(path.join(libdir, "*.so*"))) do
-                local real = os.realpath(libfile)
+                local real = resolve_path(libfile)
                 if real and not seen[real] then
                     seen[real] = true
                     os.vrunv("patchelf", {"--set-rpath", "$ORIGIN", libfile}, {try = true})
