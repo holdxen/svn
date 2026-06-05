@@ -317,6 +317,15 @@ package("subversion")
         local python = package:is_plat("windows") and "python" or "python3"
         os.vrunv(python, {"gen-make.py", "-t", "cmake"})
 
+        local patches = os.files(path.join(os.scriptdir(), "patches", "subversion", "**.patch"))
+        table.sort(patches)
+
+        for _, patch in ipairs(patches) do
+            os.vrunv("git", {"apply", "--ignore-space-change", "--ignore-whitespace", patch}, {
+                curdir = path.join(os.scriptdir(), "subversion")
+            })
+        end
+
         -- Find dependencies in the install directory
         local installdir = path.join(rootdir, "build", "install")
 
@@ -346,6 +355,7 @@ package("subversion")
             "-DSVN_ENABLE_SWIG_RUBY=OFF",
             "-DSVN_ENABLE_APACHE_MODULES=OFF",
             "-DSVN_BUILD_SHARED_FS=ON",
+            "-DSVN_ENABLE_AUTH_KEYCHAIN=" .. (package:is_plat("macosx") and "ON" or "OFF"),
         })
     end)
 package_end()

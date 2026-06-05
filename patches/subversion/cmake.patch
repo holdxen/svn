@@ -1,0 +1,48 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 0b3d1bf020..9bd8360469 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -91,6 +91,7 @@ option(SVN_ENABLE_NLS "Enable gettext functionality" OFF)
+ option(SVN_ENABLE_TUI "Enable TUI applications (requires ncurses)" OFF)
+ option(SVN_ENABLE_AUTH_KWALLET "Enable KWallet auth library" OFF)
+ option(SVN_ENABLE_AUTH_GNOME_KEYRING "Enable GNOME Keyring for auth credentials" OFF)
++cmake_dependent_option(SVN_ENABLE_AUTH_KEYCHAIN "Enable macOS Keychain for auth credentials" ON "APPLE" OFF)
+ cmake_dependent_option(SVN_ENABLE_AUTH_GPG_AGENT "Enable GPG Agent support" OFF "WIN32" ON)
+ 
+ option(SVN_INSTALL_PRIVATE_H "Install private header files." OFF)
+@@ -709,6 +710,27 @@ if(SVN_ENABLE_AUTH_GNOME_KEYRING)
+   )
+ endif()
+ 
++### macOS Keychain
++
++if(SVN_ENABLE_AUTH_KEYCHAIN)
++  add_library(external-keychain INTERFACE)
++  target_link_libraries(external-keychain INTERFACE
++    "-framework CoreFoundation"
++    "-framework Security"
++  )
++
++  add_private_config_definition(
++    "Defined if macOS KeyChain Services support is enabled"
++    "SVN_HAVE_KEYCHAIN_SERVICES" "1"
++  )
++  add_private_config_definition(
++    "Defined if macOS SecItem API is available"
++    "SVN_HAVE_KEYCHAIN_SECITEM_API" "1"
++  )
++
++  target_link_libraries(libsvn_subr PRIVATE external-keychain)
++endif()
++
+ if (SVN_ENABLE_TUI)
+   add_library(external-ncurses INTERFACE)
+ 
+@@ -1052,6 +1074,7 @@ message(STATUS "    Enable http:// and https://.... : ${SVN_ENABLE_RA_SERF}")
+ message(STATUS "  Auth providers:")
+ message(STATUS "    Enable KWallet integration .... : ${SVN_ENABLE_AUTH_KWALLET}")
+ message(STATUS "    Enable Gnome Keyring .......... : ${SVN_ENABLE_AUTH_GNOME_KEYRING}")
++message(STATUS "    Enable macOS Keychain ......... : ${SVN_ENABLE_AUTH_KEYCHAIN}")
+ message(STATUS "    Enable GPG Agent support ...... : ${SVN_ENABLE_AUTH_GPG_AGENT}")
+ message(STATUS "  Optional modules and targets:")
+ message(STATUS "    Build Apache Modules .......... : ${SVN_ENABLE_APACHE_MODULES}")
