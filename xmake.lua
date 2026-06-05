@@ -45,15 +45,27 @@ package("openssl")
     on_install(function (package)
         local packagedir = package:installdir()
         local zlib_dir = package:dep("zlib"):installdir()
-        -- Clean stale object files from previous builds in the source tree,
-        -- otherwise old .o files get linked alongside new ones causing duplicate symbols
-        os.vrunv("make", {"clean"}, {try = true})
+        -- Clean stale build artifacts from previous builds in the source tree,
+        -- otherwise old object files get linked alongside new ones causing errors
+        if package:is_plat("windows") then
+            os.vrunv("nmake", {"clean"}, {try = true})
+        else
+            os.vrunv("make", {"clean"}, {try = true})
+        end
+        -- On Windows, OpenSSL's Configure expects the full path to the .lib file
+        -- for --with-zlib-lib (not a directory like on Unix with -L prefix)
+        local zlib_lib_path
+        if package:is_plat("windows") then
+            zlib_lib_path = path.join(zlib_dir, "lib", "zlib.lib")
+        else
+            zlib_lib_path = path.join(zlib_dir, "lib")
+        end
         local configs = {
             "shared", "zlib",
             "--prefix=" .. packagedir,
             "--openssldir=" .. packagedir .. "/ssl",
             "--with-zlib-include=" .. path.join(zlib_dir, "include"),
-            "--with-zlib-lib=" .. path.join(zlib_dir, "lib"),
+            "--with-zlib-lib=" .. zlib_lib_path,
         }
         if package:is_debug() then table.insert(configs, "-g") end
         if package:is_plat("macosx") then
