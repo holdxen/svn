@@ -276,6 +276,29 @@ package("apr-iconv")
     end)
 package_end()
 
+-- 5.8 libxcrypt (Linux only, provides libcrypt.so for apr-util)
+package("libxcrypt")
+    set_sourcedir(path.join(rootdir, "libxcrypt"))
+    on_install("linux", function (package)
+        if os.isfile("Makefile") then
+            os.vrunv("make", {"distclean"}, {try = true})
+        end
+        os.vrunv("sh", {"./autogen.sh"})
+        os.vrunv("sh", {"./configure",
+            "--prefix=" .. package:installdir(),
+            "--enable-shared",
+            "--enable-static=no",
+            "--disable-obsolete-api",
+            "--disable-werror",
+        })
+        os.vrunv("make", {"-j", tostring(os.default_njob())})
+        os.vrunv("make", {"install"})
+        os.rm(path.join(package:installdir(), "lib", "*.a"))
+    end)
+    on_install("macosx", "windows", function (package)
+    end)
+package_end()
+
 -- 6. apr-util
 package("apr-util")
     set_sourcedir(path.join(rootdir, "apr-util"))
@@ -286,6 +309,9 @@ package("apr-util")
         if not package:is_plat("windows") then
             package:add("deps", "apr-iconv")
         end
+        if package:is_plat("linux") then
+            package:add("deps", "libxcrypt")
+        end
     end)
     on_install("linux", "macosx", function (package)
         local apr_src = path.join(rootdir, "apr")
@@ -293,6 +319,15 @@ package("apr-util")
         local apr_iconv_dir = package:dep("apr-iconv"):installdir()
         local expat_dir = package:dep("libexpat"):installdir()
         local openssl_dir = package:dep("openssl"):installdir()
+
+        local envs = {}
+        if package:is_plat("linux") then
+            local xcrypt_dir = package:dep("libxcrypt"):installdir()
+            envs = {
+                LDFLAGS = "-L" .. path.join(xcrypt_dir, "lib"),
+                CPPFLAGS = "-I" .. path.join(xcrypt_dir, "include"),
+            }
+        end
 
         -- Clean stale build files from previous runs
         if os.isfile("Makefile") then
@@ -321,7 +356,7 @@ package("apr-util")
             "--with-crypto",
             "--enable-shared",
             "--enable-static=no",
-        })
+        }, {envs = envs})
         os.vrunv("make", {"-j", tostring(os.default_njob())})
         os.vrunv("make", {"install"})
         os.rm(path.join(package:installdir(), "lib", "*.a"))
@@ -398,7 +433,7 @@ package_end()
 -- Install dependencies (except subversion, which needs serf)
 -- ============================================================
 add_requires("zlib", "libexpat", "openssl",
-             "apr", "apr-util")
+             "apr", "apr-util", "libxcrypt")
 
 -- ============================================================
 -- Serf target (built with xmake, not as package)
