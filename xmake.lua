@@ -376,7 +376,7 @@ package_end()
 -- 7. subversion (depends on all packages except serf)
 package("subversion")
     set_sourcedir(path.join(rootdir, "subversion"))
-    add_deps("zlib", "openssl", "apr", "libexpat", "apr-util")
+    add_deps("zlib", "openssl", "apr", "libexpat", "apr-util", "libxcrypt")
     on_install(function (package)
 
         os.vrunv("git", {"restore", "."}, {curdir = path.join(os.scriptdir(), "subversion")})
