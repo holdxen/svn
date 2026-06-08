@@ -63,3 +63,7 @@ $RECYCLE.BIN/
 .xmake
 build
 .claude
+output
+.vscode
+__pycache__
+svnext/target
