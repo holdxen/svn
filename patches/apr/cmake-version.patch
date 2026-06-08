@@ -1,0 +1,13 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index b8414fbbd..81b1c781c 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -17,7 +17,7 @@
+ 
+ # CMAKE_MINIMUM_REQUIRED should be the first directive in the file:
+ # https://cmake.org/cmake/help/latest/command/cmake_minimum_required.html
+-CMAKE_MINIMUM_REQUIRED(VERSION 2.8)
++CMAKE_MINIMUM_REQUIRED(VERSION 3.15)
+ 
+ PROJECT(APR C)
+ 
