@@ -1,0 +1,32 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index ed04f4c4..d9d964da 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -22,6 +22,7 @@ CMAKE_MINIMUM_REQUIRED(VERSION 3.5)
+ PROJECT(APR-Util C)
+ 
+ INCLUDE(CMakeDependentOption)
++INCLUDE(CheckLibraryExists)
+ 
+ # Enable support for MSVC runtime library selection by abstraction
+ # if supported by CMake.
+@@ -72,6 +73,10 @@ IF(APU_HAVE_CRYPTO)
+   FIND_PACKAGE(OpenSSL REQUIRED)
+   SET(APU_HAVE_OPENSSL ON)
+   SET(APU_HAVE_CRYPTO_PRNG ON)
++  CHECK_LIBRARY_EXISTS(${OPENSSL_CRYPTO_LIBRARY} OPENSSL_init_crypto "" HAVE_OPENSSL_INIT_CRYPTO)
++  IF(HAVE_OPENSSL_INIT_CRYPTO)
++    ADD_COMPILE_DEFINITIONS(HAVE_OPENSSL_INIT_CRYPTO=1)
++  ENDIF()
+ ENDIF()
+ 
+ IF(APU_HAVE_ICONV)
+@@ -313,7 +318,7 @@ IF(APU_HAVE_CRYPTO)
+   ADD_APU_MODULE(
+     apr_crypto_openssl-1 "apr_crypto_openssl"
+     "crypto/apr_crypto_openssl.c"
+-    "OpenSSL::Crypto")
++    ${OPENSSL_CRYPTO_LIBRARY})
+ ENDIF()
+ 
+ IF(APR_HAS_LDAP)
