@@ -1,8 +1,18 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 0b3d1bf020..9bd8360469 100644
+index 0b3d1bf020..311cb8727c 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -91,6 +91,7 @@ option(SVN_ENABLE_NLS "Enable gettext functionality" OFF)
+@@ -62,6 +62,9 @@ project("Subversion"
+   LANGUAGES C
+ )
+ 
++set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
++
++
+ ### Options
+ 
+ include(CMakeDependentOption)
+@@ -91,6 +94,7 @@ option(SVN_ENABLE_NLS "Enable gettext functionality" OFF)
  option(SVN_ENABLE_TUI "Enable TUI applications (requires ncurses)" OFF)
  option(SVN_ENABLE_AUTH_KWALLET "Enable KWallet auth library" OFF)
  option(SVN_ENABLE_AUTH_GNOME_KEYRING "Enable GNOME Keyring for auth credentials" OFF)
@@ -10,7 +20,7 @@ index 0b3d1bf020..9bd8360469 100644
  cmake_dependent_option(SVN_ENABLE_AUTH_GPG_AGENT "Enable GPG Agent support" OFF "WIN32" ON)
  
  option(SVN_INSTALL_PRIVATE_H "Install private header files." OFF)
-@@ -709,6 +710,27 @@ if(SVN_ENABLE_AUTH_GNOME_KEYRING)
+@@ -709,6 +713,27 @@ if(SVN_ENABLE_AUTH_GNOME_KEYRING)
    )
  endif()
  
@@ -38,7 +48,7 @@ index 0b3d1bf020..9bd8360469 100644
  if (SVN_ENABLE_TUI)
    add_library(external-ncurses INTERFACE)
  
-@@ -1052,6 +1074,7 @@ message(STATUS "    Enable http:// and https://.... : ${SVN_ENABLE_RA_SERF}")
+@@ -1052,6 +1077,7 @@ message(STATUS "    Enable http:// and https://.... : ${SVN_ENABLE_RA_SERF}")
  message(STATUS "  Auth providers:")
  message(STATUS "    Enable KWallet integration .... : ${SVN_ENABLE_AUTH_KWALLET}")
  message(STATUS "    Enable Gnome Keyring .......... : ${SVN_ENABLE_AUTH_GNOME_KEYRING}")
