@@ -31,3 +31,6 @@
 [submodule "sqlite-amalgamation"]
 	path = sqlite-amalgamation
 	url = https://github.com/holdxen/sqlite-amalgamation.git
+[submodule "cyrus-sasl"]
+	path = cyrus-sasl
+	url = https://github.com/cyrusimap/cyrus-sasl.git
