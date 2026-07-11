@@ -836,8 +836,7 @@ class Subversion(Project):
         Platform.run(["git", "restore", "."], cwd=self.source)
 
         # 生成 CMake 构建文件
-        python = "python" if Platform.is_windows() else "python3"
-        Platform.run([python, "gen-make.py", "-t", "cmake"], cwd=self.source)
+        Platform.run(["python3", "gen-make.py", "-t", "cmake"], cwd=self.source)
 
         # 应用补丁
         patches_dir = Path("./patches/subversion")
@@ -845,8 +844,7 @@ class Subversion(Project):
             patches = sorted(patches_dir.glob("*.patch"))
             for patch in patches:
                 Platform.run([
-                    "git", "apply", "--ignore-space-change",
-                    "--ignore-whitespace", str(patch.absolute()),
+                    "git", "apply", "--ignore-space-change", str(patch.absolute()),
                 ], cwd=self.source)
 
         # 构建目录
