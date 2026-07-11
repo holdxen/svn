@@ -820,7 +820,88 @@ install(FILES "${{CMAKE_CURRENT_BINARY_DIR}}/SerfConfigVersion.cmake"
 
 
 # ============================================================
-# 8. subversion (CMake, 依赖所有上述库)
+# 8. cyrus-sasl (autotools, 依赖 openssl)
+# ============================================================
+
+class CyrusSasl(Project):
+    def __init__(self):
+        super().__init__("./cyrus-sasl")
+
+    @property
+    def name(self):
+        return "cyrus-sasl"
+
+    def clean(self):
+        try:
+            if Path(self.source).joinpath("Makefile").exists():
+                Platform.run(["make", "distclean"], cwd=self.source, check=False)
+        except Exception:
+            print("  warning: failed to clean cyrus-sasl")
+
+    def compile(self, target: str):
+        installdir = str(Path(target).absolute())
+        sasl_dir = str(Path(target).joinpath("lib", "sasl2"))
+
+        if Platform.is_windows():
+            self._compile_windows(target)
+            return
+
+        if Path(self.source).joinpath("Makefile").exists():
+            Platform.run(["make", "distclean"], cwd=self.source, check=False)
+
+        # 源码如果是 release tarball 可能已自带 configure，否则需要 autoreconf
+        if not Path(self.source).joinpath("configure").exists():
+            autogen_env = os.environ.copy()
+            autogen_env["NOCONFIGURE"] = "1"
+            Platform.run(["sh", "./autogen.sh"], cwd=self.source, env=autogen_env)
+
+        configs = [
+            f"--prefix={installdir}",
+            "--enable-shared",
+            "--disable-static",
+            f"--with-openssl={installdir}",
+            f"--with-plugindir={sasl_dir}",
+            f"--with-configdir={sasl_dir}",
+            "--with-saslauthd=no",
+            "--with-dblib=none",
+            "--enable-gssapi=no",
+            "--disable-ldapdb",
+            "--disable-sql",
+            "--disable-macos-framework",
+            "--enable-plain",
+            "--enable-anon",
+            "--enable-scram",
+            "--disable-srp",
+            "--disable-otp",
+        ]
+
+        env = os.environ.copy()
+        env["PKG_CONFIG_PATH"] = (
+            f"{installdir}/lib/pkgconfig"
+            + (f":{env.get('PKG_CONFIG_PATH', '')}" if env.get("PKG_CONFIG_PATH") else "")
+        )
+
+        Platform.run(["sh", "./configure"] + configs, cwd=self.source, env=env)
+        Platform.run(["make", f"-j{Platform.cpu_count()}"], cwd=self.source)
+        Platform.run(["make", "install"], cwd=self.source)
+
+        Platform.remove_static_libs(Path(target).joinpath("lib"))
+        Platform.remove_static_libs(Path(sasl_dir))
+
+    def _compile_windows(self, target: str):
+        installdir = str(Path(target).absolute())
+        Platform.run(
+            ["nmake", "/f", "NTMakefile", f"prefix={installdir}"],
+            cwd=self.source,
+        )
+        Platform.run(
+            ["nmake", "/f", "NTMakefile", "install", f"prefix={installdir}"],
+            cwd=self.source,
+        )
+
+
+# ============================================================
+# 9. subversion (CMake, 依赖所有上述库)
 # ============================================================
 
 class Subversion(Project):
@@ -875,6 +956,7 @@ class Subversion(Project):
             "-DSVN_ENABLE_TOOLS=OFF",
             "-DSVN_ENABLE_NLS=OFF",
             "-DSVN_ENABLE_TUI=OFF",
+            "-DSVN_ENABLE_SASL=ON",
             "-DSVN_ENABLE_SWIG_PERL=OFF",
             "-DSVN_ENABLE_SWIG_PYTHON=OFF",
             "-DSVN_ENABLE_SWIG_RUBY=OFF",
@@ -901,7 +983,13 @@ class Subversion(Project):
                 "-DSVN_ENABLE_AUTH_KWALLET=OFF",
             ])
 
-        Platform.run(["cmake", ".."] + Platform.cmake_generator_args() + cmake_args, cwd=build_dir)
+        env = os.environ.copy()
+        env["PKG_CONFIG_PATH"] = (
+            f"{installdir}/lib/pkgconfig"
+            + (f":{env.get('PKG_CONFIG_PATH', '')}" if env.get("PKG_CONFIG_PATH") else "")
+        )
+
+        Platform.run(["cmake", ".."] + Platform.cmake_generator_args() + cmake_args, cwd=build_dir, env=env)
         Platform.run(["cmake", "--build", "."] + Platform.cmake_build_config_args() + [f"-j{Platform.cpu_count()}"], cwd=build_dir)
         Platform.run(["cmake", "--install", "."] + Platform.cmake_build_config_args(), cwd=build_dir)
 
@@ -1107,6 +1195,7 @@ def main():
         Libxcrypt(),
         AprUtil(),
         Serf(),
+        CyrusSasl(),
         Subversion(),
     ]
 
