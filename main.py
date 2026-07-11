@@ -890,12 +890,22 @@ class CyrusSasl(Project):
 
     def _compile_windows(self, target: str):
         installdir = str(Path(target).absolute())
+        openssl_include = str(Path(target).joinpath("include"))
+        openssl_libpath = str(Path(target).joinpath("lib"))
+        make_args = [
+            "/f", "NTMakefile",
+            f"prefix={installdir}",
+            f"OPENSSL_INCLUDE={openssl_include}",
+            f"OPENSSL_LIBPATH={openssl_libpath}",
+            "STATIC=no",
+            "SASLDB=NONE",
+        ]
         Platform.run(
-            ["nmake", "/f", "NTMakefile", f"prefix={installdir}"],
+            ["nmake"] + make_args,
             cwd=self.source,
         )
         Platform.run(
-            ["nmake", "/f", "NTMakefile", "install", f"prefix={installdir}"],
+            ["nmake"] + make_args + ["install"],
             cwd=self.source,
         )
 
