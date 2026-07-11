@@ -28,3 +28,6 @@
 [submodule "libxcrypt"]
 	path = libxcrypt
 	url = https://github.com/besser82/libxcrypt.git
+[submodule "sqlite-amalgamation"]
+	path = sqlite-amalgamation
+	url = https://github.com/holdxen/sqlite-amalgamation.git
