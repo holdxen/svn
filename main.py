@@ -833,12 +833,21 @@ class CyrusSasl(Project):
 
     def clean(self):
         try:
-            if Path(self.source).joinpath("Makefile").exists():
+            if Platform.is_windows():
+                if Path(self.source).joinpath("lib", "libsasl.dll").exists() or \
+                   Path(self.source).joinpath("lib", "auxprop.obj").exists():
+                    Platform.run(
+                        ["nmake", "/f", "NTMakefile", "clean"],
+                        cwd=self.source, check=False
+                    )
+            elif Path(self.source).joinpath("Makefile").exists():
                 Platform.run(["make", "distclean"], cwd=self.source, check=False)
         except Exception:
             print("  warning: failed to clean cyrus-sasl")
 
     def compile(self, target: str):
+        self.clean()
+
         installdir = str(Path(target).absolute())
         sasl_dir = str(Path(target).joinpath("lib", "sasl2"))
 
