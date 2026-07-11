@@ -300,7 +300,7 @@ class Openssl(Project):
 
 class Sqlite3(Project):
     def __init__(self):
-        super().__init__("./sqlite-amalgamation-3530200")
+        super().__init__("./sqlite-amalgamation")
 
     @property
     def name(self):
