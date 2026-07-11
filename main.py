@@ -962,6 +962,7 @@ class Subversion(Project):
             "-DSVN_ENABLE_SWIG_RUBY=OFF",
             "-DSVN_ENABLE_APACHE_MODULES=OFF",
             "-DSVN_BUILD_SHARED_FS=ON",
+            "-DSVN_INSTALL_PRIVATE_H=ON"
         ]
 
         if Platform.is_windows():
