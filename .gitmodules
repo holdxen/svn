@@ -30,4 +30,4 @@
 	url = https://github.com/holdxen/sqlite-amalgamation.git
 [submodule "cyrus-sasl"]
 	path = cyrus-sasl
-	url = https://github.com/cyrusimap/cyrus-sasl.git
+	url = https://github.com/holdxen/cyrus-sasl.git

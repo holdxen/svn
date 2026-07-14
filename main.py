@@ -833,90 +833,29 @@ class CyrusSasl(Project):
 
     def clean(self):
         try:
-            if Platform.is_windows():
-                if Path(self.source).joinpath("lib", "libsasl.dll").exists() or \
-                   Path(self.source).joinpath("lib", "auxprop.obj").exists():
-                    Platform.run(
-                        ["nmake", "/f", "NTMakefile", "clean"],
-                        cwd=self.source, check=False
-                    )
-            elif Path(self.source).joinpath("Makefile").exists():
-                Platform.run(["make", "distclean"], cwd=self.source, check=False)
+            path = Path(self.source).joinpath("cmake-build")
+            if path.exists():
+                os.removedirs(path)
         except Exception:
             print("  warning: failed to clean cyrus-sasl")
 
     def compile(self, target: str):
         self.clean()
-
         installdir = str(Path(target).absolute())
-        sasl_dir = str(Path(target).joinpath("lib", "sasl2"))
+        builddir = Path(self.source).joinpath("cmake-build").absolute()
+        os.makedirs(builddir, exist_ok=True)
 
-        if Platform.is_windows():
-            self._compile_windows(target)
-            return
+        Platform.run(['cmake', 
+                      '..', 
+                      f'-DOPENSSL_ROOT_DIR={installdir}', 
+                      f'-DCMAKE_INSTALL_PREFIX={installdir}',
+                      '-DSASL_BUILD_SAMPLE=OFF',
+                      '-DSASL_BUILD_TESTS=OFF',
+                      '-DSASL_BUILD_UTILS=OFF'
+                      ] + Platform.cmake_generator_args(), cwd=builddir)
+        Platform.run(['cmake', '--build', '.', '--config', 'Release'], cwd=builddir)
+        Platform.run(['cmake', '--install', '.'], cwd=builddir)
 
-        if Path(self.source).joinpath("Makefile").exists():
-            Platform.run(["make", "distclean"], cwd=self.source, check=False)
-
-        # 源码如果是 release tarball 可能已自带 configure，否则需要 autoreconf
-        if not Path(self.source).joinpath("configure").exists():
-            autogen_env = os.environ.copy()
-            autogen_env["NOCONFIGURE"] = "1"
-            Platform.run(["sh", "./autogen.sh"], cwd=self.source, env=autogen_env)
-
-        configs = [
-            f"--prefix={installdir}",
-            "--enable-shared",
-            "--disable-static",
-            f"--with-openssl={installdir}",
-            f"--with-plugindir={sasl_dir}",
-            f"--with-configdir={sasl_dir}",
-            "--with-saslauthd=no",
-            "--with-dblib=none",
-            "--enable-gssapi=no",
-            "--disable-ldapdb",
-            "--disable-sql",
-            "--disable-macos-framework",
-            "--enable-plain",
-            "--enable-anon",
-            "--enable-scram",
-            "--disable-srp",
-            "--disable-otp",
-        ]
-
-        env = os.environ.copy()
-        env["PKG_CONFIG_PATH"] = (
-            f"{installdir}/lib/pkgconfig"
-            + (f":{env.get('PKG_CONFIG_PATH', '')}" if env.get("PKG_CONFIG_PATH") else "")
-        )
-
-        Platform.run(["sh", "./configure"] + configs, cwd=self.source, env=env)
-        Platform.run(["make", f"-j{Platform.cpu_count()}"], cwd=self.source)
-        Platform.run(["make", "install"], cwd=self.source)
-
-        Platform.remove_static_libs(Path(target).joinpath("lib"))
-        Platform.remove_static_libs(Path(sasl_dir))
-
-    def _compile_windows(self, target: str):
-        installdir = str(Path(target).absolute())
-        openssl_include = str(Path(target).joinpath("include"))
-        openssl_libpath = str(Path(target).joinpath("lib"))
-        make_args = [
-            "/f", "NTMakefile",
-            f"prefix={installdir}",
-            f"OPENSSL_INCLUDE={openssl_include}",
-            f"OPENSSL_LIBPATH={openssl_libpath}",
-            "STATIC=no",
-            "SASLDB=NONE",
-        ]
-        Platform.run(
-            ["nmake"] + make_args,
-            cwd=self.source,
-        )
-        Platform.run(
-            ["nmake"] + make_args + ["install"],
-            cwd=self.source,
-        )
 
 
 # ============================================================
@@ -935,10 +874,7 @@ class Subversion(Project):
         # 恢复源文件（撤销之前的补丁）
         Platform.run(["git", "restore", "."], cwd=self.source)
 
-        # 生成 CMake 构建文件
-        Platform.run(["python3", "gen-make.py", "-t", "cmake"], cwd=self.source)
-
-        # 应用补丁
+        # 应用补丁（必须在 gen-make.py 之前，否则生成的 targets.cmake 不包含补丁内容）
         patches_dir = Path("./patches/subversion")
         if patches_dir.exists():
             patches = sorted(patches_dir.glob("*.patch"))
@@ -946,6 +882,9 @@ class Subversion(Project):
                 Platform.run([
                     "git", "apply", "--ignore-space-change", str(patch.absolute()),
                 ], cwd=self.source)
+
+        # 生成 CMake 构建文件
+        Platform.run(["python3", "gen-make.py", "-t", "cmake"], cwd=self.source)
 
         # 构建目录
         build_dir = Path(self.source).joinpath("cmake-build").absolute()

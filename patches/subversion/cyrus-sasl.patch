@@ -1,0 +1,133 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index e950c058f7..df8bb82839 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -377,6 +377,29 @@ function(target_exports target_name)
+   endif()
+ endfunction()
+ 
++function(target_exports_sasl target_name)
++  if (WIN32)
++    set(def_file_path ${CMAKE_BINARY_DIR}/${target_name}_sasl.def)
++    set(headers)
++
++    foreach(file ${ARGN})
++      list(APPEND headers "${CMAKE_CURRENT_SOURCE_DIR}/${file}")
++    endforeach()
++
++    add_custom_command(
++      OUTPUT "${def_file_path}"
++      DEPENDS ${headers}
++      COMMAND ${CMAKE_COMMAND}
++              "-DEXPORT_HEADER_FILE_PATHS=${headers}"
++              "-DEXPORT_DEF_FILE_PATH=${def_file_path}"
++              -P "${CMAKE_CURRENT_SOURCE_DIR}/build/cmake/extractor.cmake"
++      WORKING_DIRECTORY "${SERF_SOURCE_DIR}"
++    )
++
++    target_sources("${target_name}" PRIVATE "${def_file_path}")
++  endif()
++endfunction()
++
+ if (NOT EXISTS "${CMAKE_SOURCE_DIR}/build/cmake/targets.cmake")
+   message(SEND_ERROR
+     "The 'build/cmake/targets.cmake' file does NOT exist. "
+diff --git a/build/cmake/extractor.cmake b/build/cmake/extractor.cmake
+index 2bca85523a..93379aa6d5 100644
+--- a/build/cmake/extractor.cmake
++++ b/build/cmake/extractor.cmake
+@@ -50,6 +50,8 @@ foreach(file ${EXPORT_HEADER_FILE_PATHS})
+     # svn_wc__internal_walk_children() is now internal to libsvn_wc
+     # but entries-dump.c still calls it
+     list(APPEND defs "svn_wc__internal_walk_children")
++  elseif(${filename} STREQUAL "ra_svn_sasl.h")
++    list(APPEND defs "svn_ra_svn__sasl_status DATA")
+   endif()
+ endforeach()
+ 
+diff --git a/build/generator/gen_cmake.py b/build/generator/gen_cmake.py
+index ba8c632c02..3ee7ae18b7 100644
+--- a/build/generator/gen_cmake.py
++++ b/build/generator/gen_cmake.py
+@@ -145,9 +145,13 @@ class Generator(gen_base.GeneratorBase):
+           build_type = "STATIC"
+ 
+       msvc_export = []
++      msvc_export_sasl = []
+       if isinstance(target, gen_base.TargetLib):
+         for export in target.msvc_export:
+           msvc_export.append("subversion/include/" + export)
++        if target.name == "libsvn_ra_svn":
++          msvc_export_sasl.append("subversion/include/private/ra_svn_wrapped_sasl.h")
++          msvc_export_sasl.append("subversion/include/private/ra_svn_sasl.h")
+ 
+       sources = []
+       private_libs = []
+@@ -231,6 +235,7 @@ class Generator(gen_base.GeneratorBase):
+           msvc_libs = msvc_libs,
+           msvc_objects = msvc_objects,
+           msvc_export = msvc_export,
++          msvc_export_sasl = msvc_export_sasl,
+           enable_condition = enable_condition_str,
+           group = group,
+           build_type = build_type,
+diff --git a/build/generator/templates/targets.cmake.ezt b/build/generator/templates/targets.cmake.ezt
+index da6b9442e8..f7e950421e 100644
+--- a/build/generator/templates/targets.cmake.ezt
++++ b/build/generator/templates/targets.cmake.ezt
+@@ -47,7 +47,12 @@ if ([targets.enable_condition])[is targets.type "swig"]
+   )[if-any targets.msvc_export]
+   target_exports([targets.name][for targets.msvc_export]
+     [targets.msvc_export][end]
+-  )[end]
++  )[end][if-any targets.msvc_export_sasl]
++  if (SVN_ENABLE_SASL)
++    target_exports_sasl([targets.name][for targets.msvc_export_sasl]
++      [targets.msvc_export_sasl][end]
++    )
++  endif()[end]
+   set_target_properties([targets.name] PROPERTIES OUTPUT_NAME "[targets.output_name]")[if-any targets.is_apache_mod]
+   set_target_properties([targets.name] PROPERTIES PREFIX "" SUFFIX ".so")
+   if(WIN32)
+diff --git a/subversion/include/private/ra_svn_sasl.h b/subversion/include/private/ra_svn_sasl.h
+index e8284517a8..02ae5e2606 100644
+--- a/subversion/include/private/ra_svn_sasl.h
++++ b/subversion/include/private/ra_svn_sasl.h
+@@ -48,6 +48,8 @@ extern "C" {
+ 
+ extern volatile svn_atomic_t svn_ra_svn__sasl_status;
+ 
++volatile svn_atomic_t *svn_ra_svn__get_sasl_status_ptr(void);
++
+ /* Initialize secprops with default values. */
+ void
+ svn_ra_svn__default_secprops(sasl_security_properties_t *secprops);
+diff --git a/subversion/libsvn_ra_svn/cyrus_auth.c b/subversion/libsvn_ra_svn/cyrus_auth.c
+index be40c3f8ff..b89db83fac 100644
+--- a/subversion/libsvn_ra_svn/cyrus_auth.c
++++ b/subversion/libsvn_ra_svn/cyrus_auth.c
+@@ -55,6 +55,11 @@
+  */
+ volatile svn_atomic_t svn_ra_svn__sasl_status = 0;
+ 
++volatile svn_atomic_t *svn_ra_svn__get_sasl_status_ptr(void)
++{
++  return (volatile svn_atomic_t *)&svn_ra_svn__sasl_status;
++}
++
+ /* Initialized by svn_ra_svn__sasl_common_init(). */
+ static volatile svn_atomic_t sasl_ctx_count;
+ 
+diff --git a/subversion/svnserve/cyrus_auth.c b/subversion/svnserve/cyrus_auth.c
+index f02a6f1407..87970861d0 100644
+--- a/subversion/svnserve/cyrus_auth.c
++++ b/subversion/svnserve/cyrus_auth.c
+@@ -126,7 +126,7 @@ static svn_error_t *initialize(void *baton, apr_pool_t *pool)
+ 
+ svn_error_t *cyrus_init(apr_pool_t *pool)
+ {
+-  SVN_ERR(svn_atomic__init_once(&svn_ra_svn__sasl_status,
++  SVN_ERR(svn_atomic__init_once(svn_ra_svn__get_sasl_status_ptr(),
+                                 initialize, NULL, pool));
+   return SVN_NO_ERROR;
+ }
