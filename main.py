@@ -493,53 +493,6 @@ class Apr(Project):
 
 
 # ============================================================
-# 5.5 apr-iconv (autoconf, 仅 Linux/macOS)
-# ============================================================
-
-class AprIconv(Project):
-    def __init__(self):
-        super().__init__("./apr-iconv")
-
-    @property
-    def name(self):
-        return "apr-iconv"
-
-    def clean(self):
-        # 清理旧的构建文件
-        try:
-            if Path(self.source).joinpath("Makefile").exists():
-                Platform.run(["make", "distclean"], cwd=self.source, check=False)
-        except Exception:
-            print("  warning: failed to clean apr-iconv")
-
-
-    def compile(self, target: str):
-        # Windows 不需要 apr-iconv（subversion 使用 Win32 API 进行字符编码）
-        if Platform.is_windows():
-            print("  Skipping apr-iconv on Windows (not needed)")
-            return
-
-        if Path(self.source).joinpath("Makefile").exists():
-            Platform.run(["make", "distclean"], cwd=self.source, check=False)
-
-        apr_dir = str(Path(target).absolute())
-
-        Platform.run(["sh", "./buildconf"], cwd=self.source)
-        Platform.run([
-            "sh", "./configure",
-            f"--prefix={target}",
-            f"--with-apr={apr_dir}",
-            "--enable-shared",
-            "--enable-static=no",
-        ], cwd=self.source)
-        Platform.run(["make", f"-j{Platform.cpu_count()}"], cwd=self.source)
-        Platform.run(["make", "install"], cwd=self.source)
-
-        # 只删除 .a，保留 .la（apr-util 的 libtool 链接时需要 libapriconv-1.la）
-        Platform.remove_static_libs(Path(target).joinpath("lib"))
-
-
-# ============================================================
 # 5.8 libxcrypt (仅 Linux, 提供 libcrypt.so)
 # ============================================================
 
@@ -611,7 +564,6 @@ class AprUtil(Project):
 
         # 依赖路径
         apr_dir = str(Path(target).absolute())
-        apr_iconv_dir = str(Path(target).absolute())
         expat_dir = str(Path(target).absolute())
         openssl_dir = str(Path(target).absolute())
         apr_src = str(Path("./apr").absolute())
@@ -620,15 +572,12 @@ class AprUtil(Project):
         # 但不影响后续 configure）
         Platform.run(["sh", "./buildconf", f"--with-apr={apr_src}"], cwd=self.source, check=False)
 
-        # NOTE: 不要传 --with-apr-iconv=../apr-iconv！
-        # apr-util 的 configure 会以错误的 --prefix 重新运行 apr-iconv 的 configure，
-        # 导致 Makefile 和 .la 文件被破坏。使用 --with-iconv 来链接已安装的 apr-iconv。
+        # 使用系统 iconv（macOS/Linux 的 C 库自带），不再依赖 apr-iconv
         args = [
             f"--prefix={target}",
             f"--with-apr={apr_dir}",
             f"--with-expat={expat_dir}",
             "--without-libxml2",
-            f"--with-iconv={apr_iconv_dir}",
             "--without-sqlite3",
             "--without-pgsql",
             "--without-ldap",
@@ -1150,7 +1099,6 @@ def main():
         Sqlite3(),
         Openssl(),
         Apr(),
-        AprIconv(),
         Libxcrypt(),
         AprUtil(),
         Serf(),
@@ -1183,7 +1131,6 @@ def main():
 
     # 所有项目构建完成，清理 libtool .la 文件（构建期间需要保留以维护依赖链）
     Platform.remove_la_files(Path(output).joinpath("lib"))
-    Platform.remove_la_files(Path(output).joinpath("lib").joinpath("iconv"))
     Platform.delete_path(Path(output).joinpath("lib").joinpath('cmake'))
     Platform.delete_path(Path(output).joinpath("lib").joinpath('pkgconfig'))
     Platform.delete_path(Path(output).joinpath("build-1"))
