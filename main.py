@@ -31,7 +31,7 @@ class Platform:
     @staticmethod
     def is_x86():
         return Platform.arch() in ("i386", "i686", "x86")
-    
+
     @staticmethod
     def is_loongarch64():
         return Platform.arch() == "loongarch64"
@@ -845,9 +845,9 @@ class CyrusSasl(Project):
         builddir = Path(self.source).joinpath("cmake-build").absolute()
         os.makedirs(builddir, exist_ok=True)
 
-        Platform.run(['cmake', 
-                      '..', 
-                      f'-DOPENSSL_ROOT_DIR={installdir}', 
+        Platform.run(['cmake',
+                      '..',
+                      f'-DOPENSSL_ROOT_DIR={installdir}',
                       f'-DCMAKE_INSTALL_PREFIX={installdir}',
                       '-DSASL_BUILD_SAMPLE=OFF',
                       '-DSASL_BUILD_TESTS=OFF',
@@ -1189,6 +1189,10 @@ def main():
     Platform.delete_path(Path(output).joinpath("bin").joinpath("apr-1-config"))
     Platform.delete_path(Path(output).joinpath("bin").joinpath("apu-1-config"))
     Platform.delete_path(Path(output).joinpath("bin").joinpath("c_rehash"))
+
+    path = Path(output)
+    for f in path.rglob("*.pdb"):
+        f.unlink()
 
     # 修复动态库路径（对应 xmake.lua 中 subversion-install target）
     print(f"\n{'=' * 60}")
