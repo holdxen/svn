@@ -1184,6 +1184,8 @@ def main():
     # 所有项目构建完成，清理 libtool .la 文件（构建期间需要保留以维护依赖链）
     Platform.remove_la_files(Path(output).joinpath("lib"))
     Platform.remove_la_files(Path(output).joinpath("lib").joinpath("iconv"))
+    Platform.delete_path(Path(output).joinpath("lib").joinpath('cmake'))
+    Platform.delete_path(Path(output).joinpath("lib").joinpath('pkgconfig'))
     Platform.delete_path(Path(output).joinpath("build-1"))
     Platform.delete_path(Path(output).joinpath("share"))
     Platform.delete_path(Path(output).joinpath("bin").joinpath("apr-1-config"))
