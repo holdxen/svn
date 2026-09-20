@@ -12,6 +12,20 @@ import re
 # ============================================================
 
 class Platform:
+    _vs_version = "2017"
+
+    @staticmethod
+    def set_vs_version(version: str):
+        valid = {"2017": "15", "2019": "16", "2022": "17"}
+        if version not in valid:
+            raise ValueError(f"Unsupported VS version: {version}. Supported: {list(valid.keys())}")
+        Platform._vs_version = version
+
+    @staticmethod
+    def _vs_generator_name():
+        mapping = {"2017": "Visual Studio 15 2017", "2019": "Visual Studio 16 2019", "2022": "Visual Studio 17 2022"}
+        return mapping[Platform._vs_version]
+
     @staticmethod
     def os():
         return platform.system()
@@ -26,7 +40,7 @@ class Platform:
 
     @staticmethod
     def is_arm64():
-        return Platform.arch() in ("arm64", "aarch64")
+        return Platform.arch() in ("arm64", "aarch64", "ARM64")
 
     @staticmethod
     def is_x86():
@@ -82,9 +96,13 @@ class Platform:
 
     @staticmethod
     def cmake_generator_args():
-        """Windows 上指定 VS2017 x64 生成器参数"""
+        """Windows 上指定 VS 生成器参数，架构自动检测"""
         if Platform.is_windows():
-            return ["-G", "Visual Studio 15 2017", "-A", "x64"]
+            arch_map = {"x86_64": "x64", "amd64": "x64", "AMD64": "x64",
+                        "arm64": "ARM64", "aarch64": "ARM64",
+                        "i386": "Win32", "i686": "Win32", "x86": "Win32", "ARM64": "ARM64"}
+            arch = arch_map.get(Platform.arch(), "x64")
+            return ["-G", Platform._vs_generator_name(), "-A", arch]
         return []
 
     @staticmethod
@@ -263,7 +281,9 @@ class Openssl(Project):
             elif Platform.is_loongarch64():
                 compile_target = "linux64-loongarch64"
         elif Platform.is_windows():
-            if Platform.is_x64():
+            if Platform.is_arm64():
+                compile_target = "VC-WIN64-ARM"
+            elif Platform.is_x64():
                 compile_target = "VC-WIN64A"
             elif Platform.is_x86():
                 compile_target = "VC-WIN32"
@@ -282,6 +302,26 @@ class Openssl(Project):
         ]
 
         Platform.run(["perl", "Configure"] + args, cwd=self.source)
+
+        # 修复 VC-WIN64-ARM 的 ex_libs 覆盖 zlib 的问题
+        if Platform.is_windows() and Platform.is_arm64():
+            escaped_zlib_lib = zlib_lib.replace("\\", "\\\\")
+            # 修复 Makefile（实际链接使用的变量）
+            makefile = Path(self.source).joinpath("Makefile")
+            content = makefile.read_text()
+            content = content.replace(
+                'CNF_EX_LIBS=onecore.lib',
+                f'CNF_EX_LIBS=onecore.lib {zlib_lib}'
+            )
+            makefile.write_text(content)
+            # 修复 configdata.pm（子规则重新加载配置时使用）
+            configdata = Path(self.source).joinpath("configdata.pm")
+            content = configdata.read_text()
+            content = content.replace(
+                'ex_libs => "onecore.lib"',
+                f'ex_libs => "onecore.lib {escaped_zlib_lib}"'
+            )
+            configdata.write_text(content)
 
         if Platform.is_windows():
             Platform.run(["nmake"], cwd=self.source)
@@ -1091,6 +1131,15 @@ def fix_windows_paths(target: str):
 def main():
     import sys
 
+    args = sys.argv[1:]
+    is_clean = "clean" in args
+    if "--vs" in args:
+        idx = args.index("--vs")
+        if idx + 1 >= len(args):
+            print("Error: --vs requires a version argument (2017, 2019, 2022)")
+            sys.exit(1)
+        Platform.set_vs_version(args[idx + 1])
+
     output = str(Path("./output").absolute())
 
     projects = [
@@ -1106,7 +1155,7 @@ def main():
         Subversion(),
     ]
 
-    if len(sys.argv) > 1 and sys.argv[1] == "clean":
+    if is_clean:
         print("Cleaning build directories...")
         for project in projects:
             project.clean()
