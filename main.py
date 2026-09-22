@@ -5,6 +5,7 @@ import platform
 import os
 import shutil
 import re
+import tarfile
 
 
 # ============================================================
@@ -1125,6 +1126,24 @@ def fix_windows_paths(target: str):
 
 
 # ============================================================
+# 打包
+# ============================================================
+
+def create_archive(output: str):
+    """将 bin/include/lib 打包为 ./svn.tar.gz（平铺结构）"""
+    archive_path = Path("./svn.tar.gz")
+    Platform.delete_path(archive_path)
+
+    with tarfile.open(archive_path, "w:gz") as tar:
+        for name in ("bin", "include", "lib"):
+            src = Path(output).joinpath(name)
+            if src.exists():
+                tar.add(src, arcname=name)
+
+    print(f"Archive: {archive_path.absolute()}")
+
+
+# ============================================================
 # 主入口
 # ============================================================
 
@@ -1197,6 +1216,8 @@ def main():
     print("Fixing dynamic library paths")
     print(f"{'=' * 60}")
     fix_dynamic_library_paths(output)
+
+    create_archive(output)
 
     print(f"\n{'=' * 60}")
     print(f"Build complete!")
