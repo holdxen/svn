@@ -1,0 +1,147 @@
+name: Build SVN
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            label: Linux-x64
+          - os: ubuntu-22.04-arm
+            label: Linux-arm64
+          - os: macos-15
+            label: macOS-arm64
+          - os: windows-2022
+            label: Windows-x64
+            msvc_arch: x64
+          - os: windows-11-arm
+            label: Windows-arm64
+            msvc_arch: arm64
+
+    name: Build (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout repository with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      # ---- 安装平台依赖 ----
+
+      - name: Install build dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            autoconf automake libtool libtool-bin \
+            perl pkg-config patchelf cmake \
+            build-essential \
+            libsecret-1-dev \
+            libkf5wallet-dev libkf5coreaddons-dev libkf5i18n-dev \
+            libdbus-1-dev qtbase5-dev
+
+      - name: Install build dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install autoconf automake libtool cmake
+
+      - name: Install build dependencies (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install nasm -y
+          $candidates = @("${env:ProgramFiles}\NASM", "C:\tools\nasm")
+          $nasmDir = $candidates | Where-Object { Test-Path (Join-Path $_ "nasm.exe") } | Select-Object -First 1
+          if (-not $nasmDir) {
+            $cmd = Get-Command nasm -ErrorAction SilentlyContinue
+            if ($cmd) { $nasmDir = Split-Path $cmd.Source }
+          }
+          if (-not $nasmDir) { throw "nasm.exe not found after install" }
+          $nasmDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          Write-Host "Added NASM to PATH: $nasmDir"
+
+      - name: Set up MSVC environment (Windows)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.msvc_arch }}
+
+      # ---- 设置 Python ----
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # ---- 编译 ----
+
+      - name: Build SVN (Unix)
+        if: runner.os != 'Windows'
+        run: python3 main.py
+
+      - name: Build SVN (Windows)
+        if: runner.os == 'Windows'
+        run: python main.py --vs 2022
+
+      # ---- 验证构建产物 ----
+
+      - name: Verify build output
+        run: |
+          echo "=== Binaries ==="
+          ls -la output/bin/ 2>/dev/null || echo "No bin directory"
+          echo ""
+          echo "=== Libraries ==="
+          ls -la output/lib/ 2>/dev/null || echo "No lib directory"
+          echo ""
+          echo "=== SVN Version ==="
+          if [ -f output/bin/svn ]; then
+            output/bin/svn --version --quiet || true
+          elif [ -f output/bin/svn.exe ]; then
+            output/bin/svn.exe --version --quiet || true
+          fi
+        shell: bash
+
+      # ---- 重命名归档 ----
+
+      - name: Rename archive
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          label="${{ matrix.label }}"
+          os="${label%%-*}"
+          arch="${label#*-}"
+          name="svn_${os}_${arch}_${version}.tar.gz"
+          mv svn.tar.gz "$name"
+          echo "ARCHIVE_NAME=$name" >> "$GITHUB_ENV"
+          ls -la "$name"
+
+      # ---- 上传到 Release ----
+
+      - name: Upload to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.ARCHIVE_NAME }}
+
+      # ---- 打包上传 ----
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: svn-${{ matrix.label }}
+          path: output/
+          retention-days: 30
+          # 保留符号链接（macOS/Linux 动态库依赖）
+          compression-level: 9
