@@ -1206,6 +1206,7 @@ def main():
     Platform.delete_path(Path(output).joinpath("bin").joinpath("apr-1-config"))
     Platform.delete_path(Path(output).joinpath("bin").joinpath("apu-1-config"))
     Platform.delete_path(Path(output).joinpath("bin").joinpath("c_rehash"))
+    Platform.delete_path(Path(output).joinpath("bin").joinpath("c_rehash.pl"))
 
     path = Path(output)
     for f in path.rglob("*.pdb"):
